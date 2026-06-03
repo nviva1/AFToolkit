@@ -38,15 +38,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Heavy stack required only to run AlphaFold/OpenFold inference
-# (OpenFoldWrapper). These are the pip-installable pieces; the remaining
-# conda-only dependencies (openmm, pdbfixer, flash-attention, hmmer, hhsuite,
-# kalign2) are provided by environment.yml -- see the README.
+# Stack required to run AlphaFold/OpenFold structure inference + feature
+# extraction (OpenFoldWrapper). All pip/uv-installable. flash-attention and
+# deepspeed are optional accelerators (auto-detected if present).
 openfold = [
     "torch>=1.13",
     "ml-collections",
     "dm-tree",
-    "modelcif",
+    "pytorch-lightning",
+    "absl-py",
+]
+# Optional: Amber/OpenMM structure relaxation (relax_protein). Not needed for
+# embedding/feature extraction.
+relax = [
+    "openmm",
+    "pdbfixer",
 ]
 dev = [
     "pytest>=7",

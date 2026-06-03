@@ -40,6 +40,16 @@ A custom head added on top of `AlphaFold` that projects the pair and single
 representations to per-residue / per-pair energy terms (used for the
 Rosetta-energy prediction experiments). Not part of upstream OpenFold.
 
+### 3. Lazy `relax` import in `utils/script_utils.py`
+`utils/script_utils.py`
+
+Upstream imports the Amber/OpenMM relaxation module (`np.relax.relax`) at module
+load time. AFToolkit's feature-extraction pipeline only uses
+`load_models_from_command_line` and `prep_output` from this module and never
+relaxes structures, so the import was moved *inside* `relax_protein`. This keeps
+the heavy `openmm`/`pdbfixer` stack an optional dependency (the `[relax]` extra)
+rather than a hard requirement for running inference.
+
 ## Maintenance note
 
 If you ever re-sync with upstream OpenFold, re-apply the two changes above.

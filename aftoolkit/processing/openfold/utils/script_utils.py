@@ -11,8 +11,12 @@ from pytorch_lightning.utilities.deepspeed import \
 
 from aftoolkit.processing.openfold.model.model import AlphaFold  # , AlphaFoldDECODER
 from aftoolkit.processing.openfold.np import protein, residue_constants
-from aftoolkit.processing.openfold.np.relax import relax
 from aftoolkit.processing.openfold.utils.import_weights import import_jax_weights_
+
+# NOTE (AFToolkit modification): `relax` is imported lazily inside
+# `relax_protein` rather than at module load time. It pulls in the Amber/OpenMM
+# stack (openmm, pdbfixer), which the feature-extraction pipeline never needs --
+# only the optional structure-relaxation step does. See openfold/MODIFICATIONS.md.
 
 logging.basicConfig()
 logger = logging.getLogger(__file__)
@@ -247,6 +251,9 @@ def prep_output(out, batch, feature_dict, feature_processor, config_preset, mult
 
 
 def relax_protein(config, model_device, unrelaxed_protein, output_directory, output_name):
+    # Lazy import: only structure relaxation needs the Amber/OpenMM stack.
+    from aftoolkit.processing.openfold.np.relax import relax
+
     amber_relaxer = relax.AmberRelaxation(
         use_gpu=(model_device != "cpu"),
         **config.relax,

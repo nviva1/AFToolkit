@@ -113,10 +113,10 @@ def train_adapter_monomer(
         pickle.dump(model, f)
 
 
-def train_adapter_monomer_multisetting(    
-    base_model, 
+def train_adapter_monomer_multisetting(
+    base_model,
     adapter_name,
-    train_dataset_path=TRAIN_DATASET_CSV,
+    train_dataset_path,
     input_features=["pair", "lddt_logits", "plddt"],
     concat_features=True,
     train_dataset_npy_folder="./",

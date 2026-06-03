@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from AFToolKit.models.utils import calculate_metrics, get_model_suffix
+from aftoolkit.models.utils import calculate_metrics, get_model_suffix
 
 
 def test_adapter(

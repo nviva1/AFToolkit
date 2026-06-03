@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from AFToolKit.models import AdapterMonomer
-from AFToolKit.models.utils import get_model_suffix
+from aftoolkit.models import AdapterMonomer
+from aftoolkit.models.utils import get_model_suffix
 
 def train_adapter_monomer(
     base_model, 

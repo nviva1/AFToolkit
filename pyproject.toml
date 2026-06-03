@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aftoolkit"
+version = "1.0.0"
+description = "Python library for routine protein engineering tasks using AlphaFold2-derived representations."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Tatiana Shashkova" },
+    { name = "Maria Sindeeva" },
+    { name = "Nikita Ivanisenko" },
+    { name = "Alexander Telepov" },
+]
+keywords = ["alphafold", "protein-engineering", "bioinformatics", "ddg", "protein-stability"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+# Core dependencies: lightweight, pip-installable, and sufficient for the
+# task-construction / adapter / metrics APIs (no GPU or torch needed).
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "biopandas",
+    "biopython",
+    "catboost",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+# Heavy stack required only to run AlphaFold/OpenFold inference
+# (OpenFoldWrapper). These are the pip-installable pieces; the remaining
+# conda-only dependencies (openmm, pdbfixer, flash-attention, hmmer, hhsuite,
+# kalign2) are provided by environment.yml -- see the README.
+openfold = [
+    "torch>=1.13",
+    "ml-collections",
+    "dm-tree",
+    "modelcif",
+]
+dev = [
+    "pytest>=7",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/AIRI-Institute/AFToolkit"
+Repository = "https://github.com/AIRI-Institute/AFToolkit"
+
+[project.scripts]
+run_protein_task = "aftoolkit.processing.run_protein_task:main"
+run_protein_complex_task = "aftoolkit.processing.run_protein_complex_task:main"
+
+[tool.setuptools.packages.find]
+include = ["aftoolkit*"]
+
+[tool.setuptools.package-data]
+aftoolkit = [
+    "processing/openfold/resources/*",
+    "processing/openfold/np/**/*",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

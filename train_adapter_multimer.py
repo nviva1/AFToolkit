@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from AFToolKit.models import AdapterMultimer
+from aftoolkit.models import AdapterMultimer
 
 
 def get_model_suffix(model, multi_train=False):

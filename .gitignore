@@ -169,3 +169,8 @@ cython_debug/
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# AFToolkit-specific artifacts
+weights/              # downloaded AlphaFold/OpenFold weights
+output/               # default ProteinTask output dir
+*.npy                 # generated feature datasets

@@ -1,14 +1,16 @@
 import logging
 import os
 import pickle
+import sys
 import warnings
 import argparse
 
 import pandas as pd
 
 from aftoolkit.processing.protein_task import ProteinTask
-from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
 from aftoolkit.processing.arg_parser import parser, parse_mutations, parse_positions
+from aftoolkit.processing.utils import safe_filename_part
+from aftoolkit.logging_config import configure_logging
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
@@ -48,20 +50,32 @@ def prepare_task(df):
 
 
 def main():
-    args = protein_task_parser().parse_args()
+    parser_ = protein_task_parser()
+    args = parser_.parse_args()
+
+    configure_logging()
+
+    tasks = None
     if args.input:
         task_table = pd.read_csv(args.input)
         tasks = prepare_task(task_table)
     elif args.pdb:
         if not os.path.exists(args.pdb):
-            logger.exception("PDB file does not exists")
-            raise
+            parser_.error(f"PDB file does not exist: {args.pdb}")
+        if not args.chain:
+            parser_.error("--chain is required when --pdb is given")
     else:
-        logger.exception("Path to protein structure in pdb format or task in csv format is required")
-        raise
-    if not os.path.exists(args.output_dir):
-        os.mkdir(args.output_dir)
-    logger.info('Set OpenFold wrapper')
+        parser_.error(
+            "Provide either --pdb (single structure) or --input (task CSV)."
+        )
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Imported here (not at module top) so that --help and argument validation
+    # work without the optional torch/OpenFold stack installed.
+    from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
+
+    logger.info("Initializing OpenFold wrapper (device=%s)", args.device or "auto")
     of_wrapper = OpenFoldWrapper(device=args.device,
                                  inference_n_recycle=args.inference_n_recycle,
                                  always_use_template=args.always_use_template,
@@ -75,32 +89,37 @@ def main():
                                             chains=args.chain.split(','))
         protein_task.set_task_mutants(parse_mutations(args.mutations))
         protein_task.set_observable_positions(parse_positions(args.positions))
-        logger.info('Calculate embeddings')
+        logger.info("Calculating embeddings")
         protein_task.evaluate(of_wrapper=of_wrapper,
                               store_of_protein=args.store_protein
                               )
 
-        logger.info('Save results')
-        protein_task.save(f"{args.output_dir}/{args.pdb}_{args.chain}_{args.mutations}.pkl")
+        out_name = "_".join(
+            safe_filename_part(p) for p in (args.pdb, args.chain, args.mutations)
+        )
+        out_path = os.path.join(args.output_dir, f"{out_name}.pkl")
+        protein_task.save(out_path)
+        logger.info("Saved results to %s", out_path)
 
     else:
-        protein_tasks = {}
+        n_ok = 0
         for task_id in tasks:
             protein_task = ProteinTask()
             try:
-                print(task_id)
+                logger.info("Processing task %s", task_id)
                 protein_task.set_input_protein_task(task=tasks[task_id])
-                logger.info('Calculate embeddings')
                 protein_task.evaluate(of_wrapper=of_wrapper,
                                       store_of_protein=args.store_protein)
-                # protein_tasks[task_id] = protein_task
-                pickle.dump(protein_task,
-                            open(f"{args.output_dir}/{task_id}.pkl", 'wb'))
-            except Exception as e:
-                print(task_id, e)
+                out_path = os.path.join(
+                    args.output_dir, f"{safe_filename_part(task_id)}.pkl"
+                )
+                with open(out_path, "wb") as f:
+                    pickle.dump(protein_task, f)
+                n_ok += 1
+            except Exception:
+                logger.exception("Failed to process task %s; skipping", task_id)
                 continue
-
-            # pickle.dump(protein_tasks, open(args.output, 'wb'))
+        logger.info("Processed %d/%d tasks successfully", n_ok, len(tasks))
 
 
 if __name__ == "__main__":

@@ -372,3 +372,20 @@ def save_to_pdb(pdb_df, output_name, original_numbering=True):
         pdb_df["chain_id"] = pdb_df["chain_id_original"]
     prot.df["ATOM"] = pdb_df
     prot.to_pdb(output_name)
+
+
+def safe_filename_part(value):
+    """Sanitize an arbitrary string into a single safe filename component.
+
+    Strips any directory components and replaces characters that are awkward in
+    filenames (path separators, whitespace, colons, ...) with underscores.
+    ``None`` becomes the literal ``"none"``.
+    """
+    if value is None:
+        return "none"
+    import os
+    import re
+
+    value = os.path.basename(str(value))
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
+    return value or "none"

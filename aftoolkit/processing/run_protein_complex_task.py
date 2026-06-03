@@ -6,8 +6,9 @@ import argparse
 import pandas as pd
 
 from aftoolkit.processing.protein_complex_task import ProteinComplexTask
-from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
 from aftoolkit.processing.arg_parser import parser, parse_mutations, parse_positions
+from aftoolkit.processing.utils import safe_filename_part
+from aftoolkit.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
 COLUMNS_INPUT = ['pdb_id', 'chains_for_protein', 'mutations', 'positions']
@@ -51,21 +52,32 @@ def prepare_task(df):
 
 
 def main():
-    args = protein_complex_task_parser().parse_args()
+    parser_ = protein_complex_task_parser()
+    args = parser_.parse_args()
+
+    configure_logging()
+
+    tasks = None
     if args.input:
         task_table = pd.read_csv(args.input)
         tasks = prepare_task(task_table)
     elif args.pdb:
         if not os.path.exists(args.pdb):
-            logger.exception("PDB file does not exists")
-            raise
+            parser_.error(f"PDB file does not exist: {args.pdb}")
+        if not args.chains_for_protein:
+            parser_.error("--chains-for-protein is required when --pdb is given")
     else:
-        logger.exception("Path to protein structure in pdb format or task in csv format is required")
-        raise
-    if not os.path.exists(args.output_dir):
-        os.mkdir(args.output_dir)
+        parser_.error(
+            "Provide either --pdb (single structure) or --input (task CSV)."
+        )
 
-    logger.info('Set OpenFold wrapper')
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Imported here (not at module top) so that --help and argument validation
+    # work without the optional torch/OpenFold stack installed.
+    from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
+
+    logger.info("Initializing OpenFold wrapper (device=%s)", args.device or "auto")
     of_wrapper = OpenFoldWrapper(device=args.device,
                                  inference_n_recycle=args.inference_n_recycle,
                                  always_use_template=args.always_use_template,
@@ -75,10 +87,7 @@ def main():
 
     if args.pdb:
         protein_complex_task = ProteinComplexTask()
-        if args.chains_for_protein:
-            chains_for_protein = args.chains_for_protein.split(',')
-        else:
-            logging.exception('--chains-for-protein argument is required')
+        chains_for_protein = args.chains_for_protein.split(',')
         if args.chains_for_complex:
             chains_for_complex = args.chains_for_complex.split(',')
         else:
@@ -91,34 +100,40 @@ def main():
         protein_complex_task.set_observable_positions(parse_positions(args.positions))
         protein_complex_task.set_wildtype()
         protein_complex_task.set_mutate_protein()
-        logger.info('Calculate embeddings')
+        logger.info("Calculating embeddings")
         protein_complex_task.evaluate(of_wrapper=of_wrapper,
                                       store_of_protein=args.store_protein)
 
-        logger.info('Save results')
-        protein_complex_task.save(f"{args.output_dir}/{args.pdb}_{args.chain}_{args.mutations}.pkl")
+        out_name = "_".join(
+            safe_filename_part(p)
+            for p in (args.pdb, args.chains_for_protein, args.mutations)
+        )
+        out_path = os.path.join(args.output_dir, f"{out_name}.pkl")
+        protein_complex_task.save(out_path)
+        logger.info("Saved results to %s", out_path)
 
     else:
-        # protein_complex_tasks = {}
+        n_ok = 0
         for task_id in tasks:
             protein_complex_task = ProteinComplexTask()
             try:
-                print(task_id)
+                logger.info("Processing task %s", task_id)
                 protein_complex_task.set_input_protein_task(task=tasks[task_id])
                 protein_complex_task.set_observable_positions(tasks[task_id]["obs_positions"])
-                logger.info('Calculate embeddings')
                 protein_complex_task.set_wildtype()
                 protein_complex_task.set_mutate_protein()
                 protein_complex_task.evaluate(of_wrapper=of_wrapper,
                                               store_of_protein=args.store_protein)
-                pickle.dump(protein_complex_task,
-                            open(f"{args.output_dir}/{task_id}.pkl", 'wb'))
-                # protein_complex_tasks[task_id] = protein_complex_task
-            except Exception as e:
-                print(task_id, e)
+                out_path = os.path.join(
+                    args.output_dir, f"{safe_filename_part(task_id)}.pkl"
+                )
+                with open(out_path, "wb") as f:
+                    pickle.dump(protein_complex_task, f)
+                n_ok += 1
+            except Exception:
+                logger.exception("Failed to process task %s; skipping", task_id)
                 continue
-
-            # pickle.dump(protein_complex_tasks, open(args.output, 'wb'))
+        logger.info("Processed %d/%d tasks successfully", n_ok, len(tasks))
 
 
 if __name__ == "__main__":

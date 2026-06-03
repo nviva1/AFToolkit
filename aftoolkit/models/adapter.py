@@ -2,7 +2,7 @@ import os
 import pickle
 
 import numpy as np
-from scipy.stats import pearsonr, spearmanr
+from scipy.stats import spearmanr
 from tqdm import tqdm
 
 

@@ -1,7 +1,6 @@
 import logging
 import os
 import pickle
-import sys
 import warnings
 import argparse
 

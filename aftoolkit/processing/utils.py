@@ -1,10 +1,7 @@
 import subprocess
 
-import numpy as np  
 import pandas as pd
 from functools import reduce
-from scipy import stats
-from sklearn import metrics
 
 from biopandas.pdb import PandasPdb
 

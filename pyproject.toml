@@ -84,3 +84,6 @@ extend-exclude = ["aftoolkit/processing/openfold"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "inference: end-to-end OpenFold inference tests (need torch + AlphaFold weights)",
+]

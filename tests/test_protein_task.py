@@ -44,6 +44,19 @@ def test_observable_positions_default_covers_chain(monomer_pdb):
     assert obs[0]["shift_from_resi"] >= 0
 
 
+def test_observable_positions_default_without_explicit_wildtype(monomer_pdb):
+    # Regression: set_observable_positions() must lazily load the wildtype
+    # structure instead of raising KeyError('chain_id_original') when the
+    # wildtype has not been built yet.
+    task = ProteinTask()
+    task.set_input_protein_task(monomer_pdb, chains=["A"])
+    task.set_task_mutants(parse_mutations("A:S11A"))
+    task.set_observable_positions()  # no prior set_wildtype_protein()
+    obs = task.task["obs_positions"]
+    assert len(obs) == 1
+    assert obs[0]["chain_id"] == "A"
+
+
 def test_add_mutation_roundtrip():
     task = ProteinTask()
     task.add_mutation(chain_id="A", resi=11, aa_mt="A", aa_wt="S")

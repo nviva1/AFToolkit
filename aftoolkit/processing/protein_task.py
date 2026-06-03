@@ -122,6 +122,12 @@ class ProteinTask:
         if obs_positions is None:
             self.task["obs_positions"] = []
             prot_wt = self.get_wildtype_protein()
+            if prot_wt.empty:
+                # Auto-detecting positions needs the loaded wildtype structure;
+                # load it lazily so callers may set observable positions before
+                # explicitly building the wildtype protein.
+                self.set_wildtype_protein()
+                prot_wt = self.get_wildtype_protein()
             if self.task["input_protein"]['chains'] is not None:
                 chains = self.task["input_protein"]['chains']
             else:

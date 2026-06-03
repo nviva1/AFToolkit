@@ -3,7 +3,7 @@
 
 #    setup.py
 #
-#    AFToolKit setup.
+#    aftoolkit setup.
 #
 
 
@@ -11,7 +11,7 @@
 from setuptools import setup, find_packages
 
 # Setup options
-name = "AFToolKit"
+name = "aftoolkit"
 
 author = "Shashkova Tatiana, Sindeeva Maria, Ivanisenko Nikita, Telepov Alexander"
 
@@ -20,20 +20,20 @@ version = "1.0.0"
 description = \
     "Python library for routine protein engineering tasks using AlphaFold2."
 
-package_dir = {"AFToolKit": "AFToolKit"}
+package_dir = {"aftoolkit": "aftoolkit"}
 
 packages = find_packages(exclude=['tests'])
 
 package_data = \
-    {"AFToolKit": ["processing/*",
+    {"aftoolkit": ["processing/*",
                    "processing/openfold/*",
                    "models/*"
                    ]}
 
 entry_points = \
     {"console_scripts": \
-         ["run_protein_task=AFToolKit.processing.run_protein_task:main",
-          "run_protein_complex_task=AFToolKit.processing.run_protein_complex_task:main"],
+         ["run_protein_task=aftoolkit.processing.run_protein_task:main",
+          "run_protein_complex_task=aftoolkit.processing.run_protein_complex_task:main"],
      }
 
 install_requires = ["biopython",

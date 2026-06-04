@@ -213,6 +213,33 @@ These wrap `train_adapter_monomer.py` / `train_adapter_multimer.py`, which you
 can also call directly. Any estimator with the scikit-learn `fit`/`predict`
 interface can be used as the adapter's base model.
 
+## Reproducing the paper
+
+The `scripts/` directory provides a standalone, idempotent reproduction of the
+monomer stability experiment (data → AF2 features → SVM adapter → benchmark):
+
+| Script | Purpose |
+|---|---|
+| `scripts/build_cdna_task.py` | MegaScale (Tsuboyama 2023) → task CSV + structures |
+| `scripts/build_prostata_task.py` | PROSTATA dataset CSV → task CSV (uses local PDBs) |
+| `scripts/train_monomer.py` | train an SVM/MLP/CatBoost adapter from features |
+| `scripts/evaluate.py` | benchmark metrics (Spearman/Pearson/RMSE/AUC/MCC) |
+| `scripts/predict.py` | predict ΔΔG + confidence (pLDDT/pTM/PAE) for one mutation |
+| `scripts/reproduce.py` | **standalone** end-to-end orchestrator (all of the above) |
+
+```bash
+# one-time environment (uv)
+uv venv --python 3.11 .venv
+uv pip install --python .venv -e ".[openfold]" pyarrow
+
+# quick smoke (subset) or full run (PROSTATA S2648 train ≈ overnight on one GPU/MPS)
+.venv/bin/python scripts/reproduce.py --max-train 400 --datasets p53
+.venv/bin/python scripts/reproduce.py            # full; compares to paper Table 3
+```
+
+Feature generation is the only heavy step (one OpenFold pass per mutation); it
+scales linearly and is embarrassingly parallel across mutations.
+
 ## Development
 
 ```bash

@@ -171,6 +171,16 @@ Temporary Items
 .apdisk
 
 # AFToolkit-specific artifacts
-weights/              # downloaded AlphaFold/OpenFold weights
-output/               # default ProteinTask output dir
-*.npy                 # generated feature datasets
+# downloaded AlphaFold/OpenFold weights
+weights/
+# default ProteinTask output dir
+output/
+# generated feature datasets
+*.npy
+# uv / virtualenv
+.venv/
+# generated / downloaded datasets and models (regenerable via scripts/)
+data/cdna/
+data/prostata/
+data/models/
+*.log

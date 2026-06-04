@@ -14,8 +14,17 @@ from aftoolkit.inference import (
     PredictionReport,
     confidence_change,
     confidence_from_output,
+    parse_mutations_list,
     parse_point_mutation,
 )
+
+
+def test_parse_mutations_list():
+    assert parse_mutations_list("K90M") == [("K", 90, "M")]
+    assert parse_mutations_list("K90M,N107S,W103F") == [
+        ("K", 90, "M"), ("N", 107, "S"), ("W", 103, "F")
+    ]
+    assert parse_mutations_list(["K90M", "N107S"]) == [("K", 90, "M"), ("N", 107, "S")]
 
 
 def test_parse_point_mutation_valid():
@@ -37,25 +46,29 @@ def test_confidence_from_output():
                                              [2.0, 1.0, 2.0],
                                              [3.0, 2.0, 1.0]]),
     }
-    conf = confidence_from_output(of, site_idx=0)
+    conf = confidence_from_output(of, site_indices={90: 0})
     assert conf.mean_plddt == pytest.approx(80.0)
-    assert conf.plddt_at_site == pytest.approx(90.0)
+    assert conf.per_site_plddt["90"] == pytest.approx(90.0)
     assert conf.ptm == pytest.approx(0.85)
-    assert conf.mean_pae_at_site == pytest.approx(2.0)  # mean of row 0
+    assert conf.per_site_pae["90"] == pytest.approx(2.0)  # mean of row 0
 
 
-def test_confidence_from_output_no_site():
-    conf = confidence_from_output({"plddt": np.array([50.0, 60.0])}, site_idx=None)
-    assert conf.plddt_at_site is None
+def test_confidence_from_output_multi_site():
+    of = {"plddt": np.array([90.0, 80.0, 70.0])}
+    conf = confidence_from_output(of, site_indices={90: 0, 107: 2})
+    assert conf.per_site_plddt == {"90": 90.0, "107": 70.0}
     assert conf.ptm is None
+    assert conf.per_site_pae == {}
 
 
 def test_confidence_change():
-    wt = Confidence(mean_plddt=88.0, plddt_at_site=95.0, ptm=0.86, mean_pae_at_site=3.0)
-    mt = Confidence(mean_plddt=88.0, plddt_at_site=92.0, ptm=0.86, mean_pae_at_site=4.0)
+    wt = Confidence(mean_plddt=88.0, ptm=0.86,
+                    per_site_plddt={"90": 95.0}, per_site_pae={"90": 3.0})
+    mt = Confidence(mean_plddt=88.0, ptm=0.86,
+                    per_site_plddt={"90": 92.0}, per_site_pae={"90": 4.0})
     change = confidence_change(mt, wt)
-    assert change["delta_plddt_at_site"] == pytest.approx(-3.0)
-    assert change["delta_mean_pae_at_site"] == pytest.approx(1.0)
+    assert change["delta_per_site_plddt"]["90"] == pytest.approx(-3.0)
+    assert change["delta_per_site_pae"]["90"] == pytest.approx(1.0)
     assert change["delta_ptm"] == pytest.approx(0.0)
 
 
@@ -69,6 +82,6 @@ def test_prediction_report_serialization(tmp_path):
     out = tmp_path / "report.json"
     report.to_json(str(out))
     loaded = json.loads(out.read_text())
-    assert loaded["schema_version"] == "1.0"
+    assert loaded["schema_version"] == "1.1"
     assert loaded["predicted_ddg"]["ensemble_mean"] == -0.5
     assert loaded["input"]["mutation"] == "E285K"

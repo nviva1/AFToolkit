@@ -1,21 +1,21 @@
 """Mutation-impact inference for trained AFToolkit adapters.
 
-Given a structure and a point mutation, this runs the modified AlphaFold2
-inference on the wildtype and mutant, predicts the ddG impact with one or more
-trained adapter models, gathers AlphaFold confidence scores (pLDDT, pTM, PAE),
-and emits:
+Given a structure and one or more point mutations (on a single chain), this runs
+the modified AlphaFold2 inference on the wildtype and mutant, predicts the ddG
+impact with one or more trained adapter models, gathers AlphaFold confidence
+scores (pLDDT, pTM, PAE) per mutated site, and emits:
 
-* a versioned, structured ``<name>.json`` report (predictions, confidence,
-  change); and
+* a versioned, structured ``<name>.json`` report (predictions, per-site
+  confidence, change); and
 * the predicted wildtype and mutant structures as ``<name>_wt.pdb`` /
   ``<name>_mt.pdb``.
 
-The numeric/serialisation logic is kept free of any PyTorch/OpenFold imports so
-it can be unit-tested without the heavy stack (see ``tests/test_inference.py``).
+The numeric/serialisation logic is free of any PyTorch/OpenFold imports so it can
+be unit-tested without the heavy stack (see ``tests/test_inference_report.py``).
 
 CLI::
 
-    aftoolkit-predict --pdb p53.pdb --chain A --mutation E285K \\
+    aftoolkit-predict --pdb 5BPJ.pdb --chain A --mutations K90M,N107S,W103F \\
         --models "data/models/.../trained_*.pkl" --out-dir results --device mps
 """
 
@@ -36,7 +36,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 DEFAULT_FEATURES = ("pair", "lddt_logits", "plddt")
 _MUTATION_RE = re.compile(r"^(?P<wt>[A-Z])(?P<pos>\d+)(?P<mt>[A-Z])$")
 
@@ -45,13 +45,9 @@ _MUTATION_RE = re.compile(r"^(?P<wt>[A-Z])(?P<pos>\d+)(?P<mt>[A-Z])$")
 # Pure, torch-free logic (unit-tested)
 # --------------------------------------------------------------------------- #
 def parse_point_mutation(mutation: str) -> tuple[str, int, str]:
-    """Parse a point mutation string ``<WT><pos><MT>`` (e.g. ``E285K``).
+    """Parse a single point mutation ``<WT><pos><MT>`` (e.g. ``E285K``).
 
-    Returns:
-        ``(wt_aa, position, mt_aa)``.
-
-    Raises:
-        ValueError: if the string is not a valid single-residue substitution.
+    Returns ``(wt_aa, position, mt_aa)``; raises ``ValueError`` if malformed.
     """
     m = _MUTATION_RE.match(mutation.strip())
     if not m:
@@ -61,51 +57,72 @@ def parse_point_mutation(mutation: str) -> tuple[str, int, str]:
     return m["wt"], int(m["pos"]), m["mt"]
 
 
+def parse_mutations_list(mutations) -> list[tuple[str, int, str]]:
+    """Parse one or more comma-separated point mutations into ``(wt, pos, mt)``."""
+    if isinstance(mutations, str):
+        mutations = [m for m in mutations.split(",") if m.strip()]
+    return [parse_point_mutation(m) for m in mutations]
+
+
 @dataclass
 class Confidence:
-    """AlphaFold confidence scores for a single predicted structure."""
+    """AlphaFold confidence for one predicted structure (per mutated site)."""
 
     mean_plddt: float
-    plddt_at_site: Optional[float]
     ptm: Optional[float] = None
-    mean_pae_at_site: Optional[float] = None
+    per_site_plddt: dict = field(default_factory=dict)   # {"90": 96.3}
+    per_site_pae: dict = field(default_factory=dict)     # {"90": 3.4}
 
 
-def confidence_from_output(of_output: dict, site_idx: Optional[int]) -> Confidence:
-    """Build a :class:`Confidence` from a raw OpenFold output dict."""
+def confidence_from_output(of_output: dict, site_indices: dict) -> Confidence:
+    """Build :class:`Confidence` from an OpenFold output dict.
+
+    Args:
+        of_output: raw model output (``plddt``, optional ``predicted_tm_score``
+            and ``predicted_aligned_error``).
+        site_indices: mapping ``{residue_number: internal_index}`` for the sites
+            of interest.
+    """
     plddt = np.asarray(of_output["plddt"]).reshape(-1)
-    conf = Confidence(
-        mean_plddt=round(float(plddt.mean()), 3),
-        plddt_at_site=round(float(plddt[site_idx]), 3) if site_idx is not None else None,
-    )
+    conf = Confidence(mean_plddt=round(float(plddt.mean()), 3))
     if "predicted_tm_score" in of_output:
         conf.ptm = round(float(np.asarray(of_output["predicted_tm_score"]).reshape(-1)[0]), 4)
-    if "predicted_aligned_error" in of_output and site_idx is not None:
-        pae = np.asarray(of_output["predicted_aligned_error"])
-        conf.mean_pae_at_site = round(float(pae[site_idx].mean()), 3)
+    pae = np.asarray(of_output["predicted_aligned_error"]) if "predicted_aligned_error" in of_output else None
+    for resnum, idx in site_indices.items():
+        conf.per_site_plddt[str(resnum)] = round(float(plddt[idx]), 3)
+        if pae is not None:
+            conf.per_site_pae[str(resnum)] = round(float(pae[idx].mean()), 3)
     return conf
 
 
 def confidence_change(mutant: Confidence, wildtype: Confidence) -> dict:
-    """Mutant-minus-wildtype change for each shared numeric confidence field."""
-    out = {}
-    for f in dataclasses.fields(Confidence):
-        wt_v, mt_v = getattr(wildtype, f.name), getattr(mutant, f.name)
-        if isinstance(wt_v, (int, float)) and isinstance(mt_v, (int, float)):
-            out[f"delta_{f.name}"] = round(mt_v - wt_v, 3)
-    return out
+    """Mutant-minus-wildtype change for global and per-site confidence."""
+    change = {
+        "delta_mean_plddt": round(mutant.mean_plddt - wildtype.mean_plddt, 3),
+        "delta_per_site_plddt": {
+            k: round(mutant.per_site_plddt[k] - wildtype.per_site_plddt[k], 3)
+            for k in wildtype.per_site_plddt if k in mutant.per_site_plddt
+        },
+        "delta_per_site_pae": {
+            k: round(mutant.per_site_pae[k] - wildtype.per_site_pae[k], 3)
+            for k in wildtype.per_site_pae if k in mutant.per_site_pae
+        },
+    }
+    if wildtype.ptm is not None and mutant.ptm is not None:
+        change["delta_ptm"] = round(mutant.ptm - wildtype.ptm, 4)
+    return change
 
 
 @dataclass
 class PredictionReport:
-    """The full, serialisable result of a single mutation prediction."""
+    """The full, serialisable result of a mutation prediction."""
 
     input: dict
     predicted_ddg: dict
     confidence: dict
     structures: dict
     schema_version: str = SCHEMA_VERSION
-    report_json: Optional[str] = field(default=None)
+    report_json: Optional[str] = None
 
     def to_json(self, path: str) -> str:
         with open(path, "w") as f:
@@ -114,13 +131,26 @@ class PredictionReport:
         return path
 
 
+def _site_index_map(obs_positions: dict) -> dict:
+    """Map residue number -> internal index from a ``{pos_name: idx}`` dict.
+
+    Position names look like ``"K_A_90"`` (``<aa>_<chain>_<resnum>``).
+    """
+    out = {}
+    for name, idx in obs_positions.items():
+        digits = "".join(ch for ch in name.split("_")[-1] if ch.isdigit())
+        if digits:
+            out[int(digits)] = idx
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Orchestration (requires the OpenFold stack)
 # --------------------------------------------------------------------------- #
 def predict_mutation(
     pdb: str,
     chain: str,
-    mutation: str,
+    mutations,
     model_paths: Sequence[str] = (),
     device: Optional[str] = None,
     n_recycle: int = 1,
@@ -128,26 +158,27 @@ def predict_mutation(
     features: Sequence[str] = DEFAULT_FEATURES,
     wrapper=None,
 ) -> PredictionReport:
-    """Predict the impact of ``chain:mutation`` and write a JSON report + PDBs.
+    """Predict the impact of one or more mutations on ``chain``.
 
     Args:
         pdb: path to the input PDB structure.
-        chain: chain identifier the mutation applies to.
-        mutation: point mutation as ``<WT><pos><MT>`` (e.g. ``E285K``).
+        chain: chain identifier the mutations apply to.
+        mutations: a single mutation (``"E285K"``) or several, comma-separated
+            (``"K90M,N107S,W103F"``) or as a list.
         model_paths: trained adapter ``.pkl`` paths/globs (empty -> confidence only).
         device: ``cuda:0``/``mps``/``cpu``; auto-detected when ``None``.
-        n_recycle: number of AlphaFold recycling iterations (match the model's training).
+        n_recycle: AlphaFold recycling iterations (match the model's training).
         out_dir: directory for the JSON report and predicted PDB structures.
         features: feature names the adapter consumes.
-        wrapper: optional pre-initialised ``OpenFoldWrapper`` (else one is created).
+        wrapper: optional pre-initialised ``OpenFoldWrapper``.
 
     Returns:
         The :class:`PredictionReport` (also written to ``<out_dir>/<name>.json``).
 
     Raises:
-        FileNotFoundError: if ``pdb`` does not exist.
-        ValueError: if ``mutation`` is malformed or its WT residue does not match
-            the residue found at that position in the structure.
+        FileNotFoundError: if ``pdb`` is missing.
+        ValueError: if any mutation is malformed or its WT residue does not match
+            the structure.
     """
     from aftoolkit.processing.protein_task import ProteinTask
     from aftoolkit.processing.arg_parser import parse_mutations, parse_positions
@@ -156,43 +187,44 @@ def predict_mutation(
     pdb = os.path.expanduser(pdb)
     if not os.path.exists(pdb):
         raise FileNotFoundError(f"PDB not found: {pdb}")
-    wt_aa, pos, mt_aa = parse_point_mutation(mutation)
+    parsed = parse_mutations_list(mutations)
+    mut_strs = [f"{wt}{pos}{mt}" for wt, pos, mt in parsed]
     os.makedirs(out_dir, exist_ok=True)
-    mut_spec = f"{chain}:{mutation}"
-    name = f"{safe_filename_part(os.path.basename(pdb))}_{chain}_{mutation}"
+    mut_spec = ",".join(f"{chain}:{m}" for m in mut_strs)
+    pos_spec = ",".join(f"{chain}:{pos}" for _, pos, _ in parsed)
+    label = "_".join(mut_strs)
+    name = f"{safe_filename_part(os.path.basename(pdb))}_{chain}_{label}"
 
-    # Build the task and validate the declared WT residue against the structure
-    # *before* loading the (expensive) model, so bad input fails fast.
+    # Build task and validate WT residues *before* loading the model (fail fast).
     task = ProteinTask()
     task.set_input_protein_task(pdb, chains=[chain])
     task.set_task_mutants(parse_mutations(mut_spec))
     task.set_wildtype_protein()
-    found = task.get_wt_aa(pos, chain)
-    if found != wt_aa:
-        raise ValueError(
-            f"Mutation {mutation} expects wildtype {wt_aa} at {chain}:{pos}, "
-            f"but the structure has {found}."
-        )
-    task.set_observable_positions(parse_positions(f"{chain}:{pos}"))
+    for wt, pos, _ in parsed:
+        found = task.get_wt_aa(pos, chain)
+        if found != wt:
+            raise ValueError(
+                f"Mutation {wt}{pos}? expects wildtype {wt} at {chain}:{pos}, "
+                f"but the structure has {found}."
+            )
+    task.set_observable_positions(parse_positions(pos_spec))
 
     if wrapper is None:
         from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
         wrapper = OpenFoldWrapper(device=device, inference_n_recycle=n_recycle)
         wrapper.init_model()
 
-    # WT and mutant evaluated separately so each structure's confidence
-    # (the wrapper retains only the latest output) is captured.
     logger.info("Running wildtype inference for %s", name)
     task.evaluate_wildtype_protein(wrapper, store_of_protein=True)
-    wt_idx = next(iter(task.get_wildtype_observable_positions().values()), None)
-    wt_conf = confidence_from_output(wrapper.of_output, wt_idx)
+    wt_sites = _site_index_map(task.get_wildtype_observable_positions())
+    wt_conf = confidence_from_output(wrapper.of_output, wt_sites)
     wt_pdb = os.path.join(out_dir, f"{name}_wt.pdb")
     save_to_pdb(task.get_wildtype_protein_of(), wt_pdb)
 
     logger.info("Running mutant inference for %s", name)
     task.evaluate_mutate_protein(wrapper, store_of_protein=True)
-    mt_idx = next(iter(task.get_mutate_observable_positions().values()), None)
-    mt_conf = confidence_from_output(wrapper.of_output, mt_idx)
+    mt_sites = _site_index_map(task.get_mutate_observable_positions())
+    mt_conf = confidence_from_output(wrapper.of_output, mt_sites)
     mt_pdb = os.path.join(out_dir, f"{name}_mt.pdb")
     save_to_pdb(task.get_mutate_protein_of(), mt_pdb)
 
@@ -208,13 +240,14 @@ def predict_mutation(
 
     report = PredictionReport(
         input={
-            "pdb": pdb, "chain": chain, "mutation": mutation, "position": pos,
+            "pdb": pdb, "chain": chain, "mutations": mut_strs, "positions": [p for _, p, _ in parsed],
             "device": wrapper.device, "n_recycle": n_recycle, "features": list(features),
         },
         predicted_ddg={
             "per_model": predictions,
             "ensemble_mean": ensemble,
-            "units": "kcal/mol (sign per the adapter's training convention)",
+            "units": "kcal/mol (sign per the adapter's training convention; "
+                     "multi-mutants = sum of single-mutation effects)",
         },
         confidence={
             "wildtype": dataclasses.asdict(wt_conf),
@@ -236,8 +269,10 @@ def main() -> None:
                     "report and predicted WT/mutant PDB structures.",
     )
     p.add_argument("--pdb", required=True, help="Input PDB structure.")
-    p.add_argument("--chain", required=True, help="Chain the mutation applies to.")
-    p.add_argument("--mutation", required=True, help="Point mutation, e.g. E285K.")
+    p.add_argument("--chain", required=True, help="Chain the mutation(s) apply to.")
+    p.add_argument("--mutations", "--mutation", dest="mutations", required=True,
+                   help="One mutation (E285K) or several, comma-separated "
+                        "(K90M,N107S,W103F).")
     p.add_argument("--models", nargs="*", default=[],
                    help="Trained adapter .pkl paths/globs (omit for confidence only).")
     p.add_argument("--out-dir", default="results", help="Output directory.")
@@ -248,12 +283,11 @@ def main() -> None:
     configure_logging()
     try:
         report = predict_mutation(
-            pdb=args.pdb, chain=args.chain, mutation=args.mutation,
+            pdb=args.pdb, chain=args.chain, mutations=args.mutations,
             model_paths=args.models, device=args.device, n_recycle=args.n_recycle,
             out_dir=args.out_dir,
         )
     except (FileNotFoundError, ValueError) as exc:
-        # Expected user-input errors: report cleanly, no stack trace.
         raise SystemExit(f"error: {exc}")
     print(json.dumps(dataclasses.asdict(report), indent=2))
 

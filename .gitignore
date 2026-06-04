@@ -184,3 +184,5 @@ data/cdna/
 data/prostata/
 data/models/
 *.log
+# inference outputs
+results/

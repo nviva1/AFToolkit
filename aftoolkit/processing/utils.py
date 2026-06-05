@@ -18,14 +18,28 @@ DF_COLUMNS = ["record_name", "atom_number", "blank_1", "atom_name", "alt_loc",
                "blank_4", "segment_id", "element_symbol", "charge", "line_idx",
                ]
 
+# AlphaFold2's relative-position encoding clips residue-index offsets to
+# +/- relpos_k (config: model.input_embedder.relpos_k = 32). When several chains
+# are collapsed onto a single chain, the inter-chain gap in the residue numbering
+# must be >= relpos_k so the closest cross-chain residue pair saturates into the
+# terminal "maximally separated" bin -- i.e. the chains read as distinct. Anything
+# >= 32 is equivalent; 32 is the minimal optimal value. (The previous default of
+# 25 was below the window and leaked a spurious sequential-adjacency signal.)
+RELPOS_K = 32
+DEFAULT_CHAIN_GAP = RELPOS_K
 
-def get_internal_residue_numbering(pdb_df):
+
+def get_internal_residue_numbering(pdb_df, chain_gap=DEFAULT_CHAIN_GAP):
     """
-    In case of multichain structure change residue atom numeration.
-    All chain id combine in one and between residues add gap of 25 positions.
+    Collapse a (possibly multichain) structure onto a single chain's numbering.
+
+    All chains are renumbered into one continuous index, with ``chain_gap`` empty
+    residue positions inserted between chains so AlphaFold treats them as separate
+    (see ``DEFAULT_CHAIN_GAP``).
 
     Args:
         pdb_df: pandas data frame for original protein structure
+        chain_gap: residue-index gap inserted between chains (default: relpos_k=32)
 
     Returns:
          residue_number_af: vector with residue new numbering
@@ -45,7 +59,7 @@ def get_internal_residue_numbering(pdb_df):
 
         residue_number_af_ -= residue_number_af_[0] - 1 - n_chain
         residue_number_af += list(residue_number_af_)
-        n_chain = 25 + residue_number_af[-1]  # add gap between chains
+        n_chain = chain_gap + residue_number_af[-1]  # add gap between chains
     return residue_number_af
 
 
@@ -59,9 +73,12 @@ def get_regions_mask(regions, protein):
     return reduce(lambda x, y: x | y, conditions)
 
 
-def load_protein(path, chains=None, regions=None):
+def load_protein(path, chains=None, regions=None, chain_gap=DEFAULT_CHAIN_GAP):
     """load protein and change numbering from 1 to N_res
-    add 25 residues gap between chains
+
+    Multiple chains are collapsed onto a single chain "A" with a ``chain_gap``
+    residue-index gap between them (default: relpos_k = 32; see
+    ``DEFAULT_CHAIN_GAP``).
     input: pdb_path
     output: pdb dataframe prepared for alphafold inference
     """
@@ -77,7 +94,7 @@ def load_protein(path, chains=None, regions=None):
     if chains is not None:
         pdb_df = pdb_df[pdb_df["chain_id_original"].isin(chains)]
 
-    pdb_df["residue_number"] = get_internal_residue_numbering(pdb_df)
+    pdb_df["residue_number"] = get_internal_residue_numbering(pdb_df, chain_gap)
     pdb_df["chain_id"] = 'A'
     pdb_df["mask"] = False
 
@@ -86,7 +103,7 @@ def load_protein(path, chains=None, regions=None):
     if regions is not None:
         combined_condition = get_regions_mask(regions, pdb_df)
         pdb_df = pdb_df[combined_condition]
-        pdb_df['residue_number'] = get_internal_residue_numbering(pdb_df)
+        pdb_df['residue_number'] = get_internal_residue_numbering(pdb_df, chain_gap)
 
     return pdb_df
 

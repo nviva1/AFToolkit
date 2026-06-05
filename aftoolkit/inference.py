@@ -36,9 +36,19 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 DEFAULT_FEATURES = ("pair", "lddt_logits", "plddt")
 _MUTATION_RE = re.compile(r"^(?P<wt>[A-Z])(?P<pos>\d+)(?P<mt>[A-Z])$")
+
+# Inference pipelines -> OpenFoldWrapper flags.
+#   mask    : AFToolkit (masked template after cycle 0)        [default]
+#   vanilla : standard AF2 (template kept every recycle)
+#   af2rank : AF2Rank "gap" trick (side chains masked to gaps)
+PIPELINES = {
+    "mask":    dict(always_use_template=False, side_chain_mask=False),
+    "vanilla": dict(always_use_template=True,  side_chain_mask=False),
+    "af2rank": dict(always_use_template=False, side_chain_mask=True),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -156,6 +166,7 @@ def predict_mutation(
     n_recycle: int = 1,
     out_dir: str = ".",
     features: Sequence[str] = DEFAULT_FEATURES,
+    pipeline: str = "mask",
     wrapper=None,
 ) -> PredictionReport:
     """Predict the impact of one or more mutations on ``chain``.
@@ -187,6 +198,8 @@ def predict_mutation(
     pdb = os.path.expanduser(pdb)
     if not os.path.exists(pdb):
         raise FileNotFoundError(f"PDB not found: {pdb}")
+    if pipeline not in PIPELINES:
+        raise ValueError(f"Unknown pipeline {pipeline!r}; choose from {list(PIPELINES)}.")
     parsed = parse_mutations_list(mutations)
     mut_strs = [f"{wt}{pos}{mt}" for wt, pos, mt in parsed]
     os.makedirs(out_dir, exist_ok=True)
@@ -211,7 +224,8 @@ def predict_mutation(
 
     if wrapper is None:
         from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
-        wrapper = OpenFoldWrapper(device=device, inference_n_recycle=n_recycle)
+        wrapper = OpenFoldWrapper(device=device, inference_n_recycle=n_recycle,
+                                  **PIPELINES[pipeline])
         wrapper.init_model()
 
     logger.info("Running wildtype inference for %s", name)
@@ -241,7 +255,8 @@ def predict_mutation(
     report = PredictionReport(
         input={
             "pdb": pdb, "chain": chain, "mutations": mut_strs, "positions": [p for _, p, _ in parsed],
-            "device": wrapper.device, "n_recycle": n_recycle, "features": list(features),
+            "device": wrapper.device, "n_recycle": n_recycle, "pipeline": pipeline,
+            "features": list(features),
         },
         predicted_ddg={
             "per_model": predictions,
@@ -278,6 +293,9 @@ def main() -> None:
     p.add_argument("--out-dir", default="results", help="Output directory.")
     p.add_argument("--device", default=None, help="cuda:0 / mps / cpu (auto if unset).")
     p.add_argument("--n-recycle", type=int, default=1)
+    p.add_argument("--format", dest="pipeline", default="mask", choices=list(PIPELINES),
+                   help="Inference pipeline: mask (AFToolkit, default), vanilla (AF2), "
+                        "or af2rank (the 'gap' trick).")
     args = p.parse_args()
 
     configure_logging()
@@ -285,7 +303,7 @@ def main() -> None:
         report = predict_mutation(
             pdb=args.pdb, chain=args.chain, mutations=args.mutations,
             model_paths=args.models, device=args.device, n_recycle=args.n_recycle,
-            out_dir=args.out_dir,
+            out_dir=args.out_dir, pipeline=args.pipeline,
         )
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"error: {exc}")

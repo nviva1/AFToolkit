@@ -82,6 +82,6 @@ def test_prediction_report_serialization(tmp_path):
     out = tmp_path / "report.json"
     report.to_json(str(out))
     loaded = json.loads(out.read_text())
-    assert loaded["schema_version"] == "1.1"
+    assert loaded["schema_version"] == "1.2"
     assert loaded["predicted_ddg"]["ensemble_mean"] == -0.5
     assert loaded["input"]["mutation"] == "E285K"

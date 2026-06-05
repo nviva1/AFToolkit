@@ -186,3 +186,5 @@ data/models/
 *.log
 # inference outputs
 results/
+data/rbdaim/
+data/berovin/

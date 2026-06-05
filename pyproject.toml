@@ -67,6 +67,7 @@ Repository = "https://github.com/AIRI-Institute/AFToolkit"
 run_protein_task = "aftoolkit.processing.run_protein_task:main"
 run_protein_complex_task = "aftoolkit.processing.run_protein_complex_task:main"
 aftoolkit-predict = "aftoolkit.inference:main"
+aftoolkit-score-complex = "aftoolkit.scoring:main"
 
 [tool.setuptools.packages.find]
 include = ["aftoolkit*"]

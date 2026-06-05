@@ -1,0 +1,4 @@
+# fetched input structures and run outputs (regenerable)
+inputs/
+recomputed/
+scores.csv

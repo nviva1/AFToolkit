@@ -18,12 +18,12 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 __all__ = [
     "delta_bfactor_structure",
-    "write_pymol_session",
     "pymol_available",
+    "write_pymol_session",
 ]
 
 logger = logging.getLogger(__name__)

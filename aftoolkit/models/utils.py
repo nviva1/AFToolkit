@@ -24,7 +24,7 @@ def calculate_metrics(predictions, targets, stab_threshold=-0.5):
     classification_targets = (targets < stab_threshold).astype(int)
     classification_predictions = (predictions < stab_threshold).astype(int)
 
-    precision, recall, thresholds = metrics.precision_recall_curve(
+    precision, recall, _ = metrics.precision_recall_curve(
         classification_targets, -predictions
     )
 

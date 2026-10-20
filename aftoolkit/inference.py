@@ -35,9 +35,9 @@ DEFAULT_FEATURES = ("pair", "lddt_logits", "plddt")
 #: Inference formats, as ``OpenFoldWrapper`` flags. See that class for what each
 #: one shows the model.
 PIPELINES = {
-    "mask":    dict(always_use_template=False, side_chain_mask=False),
-    "vanilla": dict(always_use_template=True,  side_chain_mask=False),
-    "af2rank": dict(always_use_template=False, side_chain_mask=True),
+    "mask":    {"always_use_template": False, "side_chain_mask": False},
+    "vanilla": {"always_use_template": True,  "side_chain_mask": False},
+    "af2rank": {"always_use_template": False, "side_chain_mask": True},
 }
 
 __all__ = [

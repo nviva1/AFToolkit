@@ -25,10 +25,10 @@ import sys
 from importlib.abc import Loader, MetaPathFinder
 
 __all__ = [
-    "install_legacy_aliases",
-    "migrate_protein_task_state",
-    "migrate_protein_complex_task_state",
     "LEGACY_MODULES",
+    "install_legacy_aliases",
+    "migrate_protein_complex_task_state",
+    "migrate_protein_task_state",
 ]
 
 _OLD_NAME = "AFToolKit"

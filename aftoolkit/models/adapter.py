@@ -111,7 +111,7 @@ class AdapterMonomer:
             X, Y = input_features, targets
         Y_pred = self.base_model.predict(X)
 
-        correlation_coefficient, p_value = spearmanr(Y, Y_pred)
+        correlation_coefficient = spearmanr(Y, Y_pred).statistic
         return Y_pred, correlation_coefficient
 
     def create_proteintask_dataset(self, features_dict, targets_dict):

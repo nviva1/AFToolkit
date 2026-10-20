@@ -84,6 +84,10 @@ def _legacy_task_state():
 @pytest.mark.parametrize("old,new", sorted(LEGACY_MODULES.items()))
 def test_moved_modules_still_import(old, new):
     """Pickles name the module their class came from; the old paths must resolve."""
+    if new.startswith("aftoolkit.folding"):
+        # Resolving this one imports the OpenFold stack; the default suite is
+        # deliberately torch-free, so only check it when torch is installed.
+        pytest.importorskip("torch")
     assert importlib.import_module(old) is importlib.import_module(new)
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Evaluate a trained monomer adapter on a benchmark test set.
 
-Loads the per-mutation features produced by ``run_protein_task``, runs the
+Loads the per-mutation features produced by ``aftoolkit task``, runs the
 adapter, and reports the same metrics the paper uses (Spearman / Pearson R,
 RMSE, ROC-AUC, MCC).
 

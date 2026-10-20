@@ -44,7 +44,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     # One model load, reused across all complexes.
-    from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
+    from aftoolkit.folding import OpenFoldWrapper
     wrapper = OpenFoldWrapper(device=args.device, inference_n_recycle=args.n_recycle)
     wrapper.init_model()
 

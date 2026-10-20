@@ -24,24 +24,28 @@ pytest.importorskip("tree")
 
 from aftoolkit import (  # noqa: E402  (after importorskip)
     OpenFoldWrapper,
-    ProteinTask,
     ProteinComplexTask,
-    parse_mutations,
+    ProteinTask,
     parse_positions,
 )
 from aftoolkit.constants import MODEL_WEIGHTS_DIR, OF_WEIGHTS  # noqa: E402
 
 _WEIGHTS = os.path.join(MODEL_WEIGHTS_DIR, OF_WEIGHTS)
-_FEATURE_KEYS = ["single", "pair", "lddt_logits", "plddt"]
 
 
 @pytest.fixture(scope="module")
 def wrapper():
     if not os.path.exists(_WEIGHTS):
         pytest.skip(f"AlphaFold weights not found at {_WEIGHTS}")
-    w = OpenFoldWrapper(device="mps", inference_n_recycle=1, return_all_cycles=False)
-    w.init_model()
-    return w
+    return OpenFoldWrapper(device="mps", inference_n_recycle=1).init_model()
+
+
+@pytest.fixture(scope="module")
+def cycling_wrapper():
+    if not os.path.exists(_WEIGHTS):
+        pytest.skip(f"AlphaFold weights not found at {_WEIGHTS}")
+    return OpenFoldWrapper(device="mps", inference_n_recycle=1,
+                           return_all_cycles=True).init_model()
 
 
 def _check_features(feats):
@@ -54,31 +58,44 @@ def _check_features(feats):
 
 def test_monomer_inference(wrapper, monomer_pdb):
     task = ProteinTask()
-    task.set_input_protein_task(monomer_pdb, chains=["A"])
-    task.set_task_mutants(parse_mutations("A:S11A"))
-    task.set_observable_positions(parse_positions("A:11"))
-    task.evaluate(of_wrapper=wrapper, store_of_protein=True)
+    task.set_input(monomer_pdb, chains=["A"])
+    task.set_mutations("A:S11A")
+    task.set_observables(parse_positions("A:11"))
+    task.evaluate(wrapper, store_structure=True)
 
-    pred = task.get_wildtype_protein_of()
-    assert pred is not None and not pred.empty
-    _check_features(task.get_wildtype_protein_of_features())
-    _check_features(task.get_mutate_protein_of_features())
+    assert not task.wildtype.folded.empty
+    _check_features(task.wildtype.features)
+    _check_features(task.mutant.features)
 
-    wt, mt = task.get_protein_embeddings(["pair", "lddt_logits", "plddt"])
+    wt, mt = task.embeddings(["pair", "lddt_logits", "plddt"])
     assert wt.shape == mt.shape == (179,)  # 128 + 50 + 1
+
+
+def test_per_cycle_features_are_populated(cycling_wrapper, monomer_pdb):
+    """Per-recycle features come back for both states against the real model.
+
+    That each state uses its *own* observed indices -- the bug that the shared
+    evaluate path removes -- is pinned down in ``test_protein_task.py``, which
+    can assert on the exact indices without running inference.
+    """
+    task = ProteinTask()
+    task.set_input(monomer_pdb, chains=["A"])
+    task.set_mutations("A:S11-")
+    task.set_observables(parse_positions("A:12"))
+    task.evaluate(cycling_wrapper, store_structure=True)
+
+    assert task.wildtype.cycles and task.mutant.cycles
+    _check_features(task.mutant.cycles[0])
+    assert set(task.mutant.cycles[0]) == set(task.mutant.observed)
 
 
 def test_complex_inference(wrapper, complex_pdb):
     task = ProteinComplexTask()
-    task.set_input_protein_task(
-        complex_pdb, chains_for_protein=["I"], chains_for_complex=["E", "I"]
-    )
-    task.set_task_mutants(parse_mutations("I:L38S"))
-    task.set_observable_positions(parse_positions("I:38"))
-    task.set_wildtype()
-    task.set_mutate_protein()
-    task.evaluate(of_wrapper=wrapper, store_of_protein=True)
+    task.set_input(complex_pdb, protein_chains=["I"], complex_chains=["E", "I"])
+    task.set_mutations("I:L38S")
+    task.set_observables(parse_positions("I:38"))
+    task.evaluate(wrapper, store_structure=True)
 
-    _check_features(task.get_wildtype_protein_of_features())
-    _check_features(task.get_wildtype_complex_of_features())
-    _check_features(task.get_mutate_complex_of_features())
+    _check_features(task.protein.wildtype.features)
+    _check_features(task.complex.wildtype.features)
+    _check_features(task.complex.mutant.features)

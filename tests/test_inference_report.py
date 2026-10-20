@@ -14,28 +14,16 @@ from aftoolkit.inference import (
     PredictionReport,
     confidence_change,
     confidence_from_output,
-    parse_mutations_list,
-    parse_point_mutation,
+    site_index_map,
 )
 
 
-def test_parse_mutations_list():
-    assert parse_mutations_list("K90M") == [("K", 90, "M")]
-    assert parse_mutations_list("K90M,N107S,W103F") == [
-        ("K", 90, "M"), ("N", 107, "S"), ("W", 103, "F")
-    ]
-    assert parse_mutations_list(["K90M", "N107S"]) == [("K", 90, "M"), ("N", 107, "S")]
+def test_site_index_map_reads_residue_keys():
+    assert site_index_map({"K_A_90": 0, "N_A_107": 12}) == {90: 0, 107: 12}
 
 
-def test_parse_point_mutation_valid():
-    assert parse_point_mutation("E285K") == ("E", 285, "K")
-    assert parse_point_mutation(" A11S ") == ("A", 11, "S")
-
-
-@pytest.mark.parametrize("bad", ["E285", "285K", "e285k", "EK", "E285KK", ""])
-def test_parse_point_mutation_invalid(bad):
-    with pytest.raises(ValueError):
-        parse_point_mutation(bad)
+def test_site_index_map_skips_unnumbered_keys():
+    assert site_index_map({"weird": 3}) == {}
 
 
 def test_confidence_from_output():

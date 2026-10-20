@@ -32,19 +32,23 @@ class AdapterMonomer:
     def predict(self, protein_task, treat_multiple_as_singles=False):
         """Predict for a single `ProteinTask` object using a pre-trained Adapter."""
         if self.multi_as_singlessum or treat_multiple_as_singles:
-            # introduce single mutations one-at-a-time and add their effects
-            single_predictions = []
-            all_mutations = protein_task.task["mutants"]
-            for mut_pos, mut_aa in all_mutations.items():
-                protein_task.set_task_mutants({mut_pos: mut_aa})
-                X = self.protein_task_to_input_features(protein_task)
-                single_prediction = self.base_model.predict(X.reshape(1, -1))
-                single_predictions.append(single_prediction)
-            prediction = sum(single_predictions)
-        else:
-            X = self.protein_task_to_input_features(protein_task)
-            prediction = self.base_model.predict(X)
-        return prediction
+            # Score each mutation on its own and add the effects. The task is
+            # restored afterwards so predicting does not mutate its input.
+            all_mutations = protein_task.mutations
+            try:
+                single_predictions = []
+                for mutation in all_mutations:
+                    protein_task.set_mutations([mutation])
+                    X = self.protein_task_to_input_features(protein_task)
+                    single_predictions.append(
+                        self.base_model.predict(X.reshape(1, -1))
+                    )
+            finally:
+                protein_task.set_mutations(all_mutations)
+            return sum(single_predictions)
+
+        X = self.protein_task_to_input_features(protein_task)
+        return self.base_model.predict(X)
     
     def train(
         self, 
@@ -152,8 +156,8 @@ class AdapterMonomer:
     def protein_task_to_input_features(self, protein_task):
         """Get input features (with names from `self.features_list`) \
         from input `ProteinTask` with pre-calculated features."""
-        wt_feats, mt_feats = protein_task.get_protein_embeddings(
-            self.features_list, 
+        wt_feats, mt_feats = protein_task.embeddings(
+            self.features_list,
             self.protein_aggregation,
             self.multi_aggregation,
         )
@@ -170,21 +174,12 @@ class AdapterMultimer(AdapterMonomer):
     def protein_task_to_input_features(self, protein_complex_task):
         """Get SVM input features (with names from `self.features_list`) \
         from input `ProteinTask` with pre-calculated features."""
-        wt_feats_complex, mt_feats_complex = protein_complex_task.complex.get_protein_embeddings(
-            self.features_list, 
+        return np.concatenate(protein_complex_task.embeddings(
+            self.features_list,
             self.protein_aggregation,
             self.multi_aggregation,
-        )
-        if self.only_complex_features:
-            return np.concatenate((wt_feats_complex, mt_feats_complex))
-        else:
-            wt_feats_mono, mt_feats_mono = protein_complex_task.protein.get_protein_embeddings(
-            self.features_list, 
-            self.protein_aggregation,
-            self.multi_aggregation,
-            )
-            return np.concatenate((wt_feats_mono, mt_feats_mono,
-            wt_feats_complex, mt_feats_complex))
+            include_unbound=not self.only_complex_features,
+        ))
 
 
 class AdapterMonomerPerResiduePredictor(AdapterMonomer):
@@ -192,7 +187,7 @@ class AdapterMonomerPerResiduePredictor(AdapterMonomer):
         """Get SVM input features (with names from `self.features_list`) \
         from input `ProteinTask` with pre-calculated features."""
         all_feats = []
-        wt_features = protein_task.get_wildtype_protein_of_features()
+        wt_features = protein_task.wildtype.features
         position_names = wt_features.keys()
         for position_name in position_names:
             pos_wt_feats = [

@@ -1,60 +1,86 @@
-"""AFToolkit — protein engineering with AlphaFold2-derived representations.
+"""AFToolkit -- protein engineering with AlphaFold2-derived representations.
 
 Typical usage::
 
-    from aftoolkit import ProteinTask, OpenFoldWrapper, parse_mutations
+    from aftoolkit import ProteinTask, OpenFoldWrapper
 
-    wrapper = OpenFoldWrapper(device="cuda:0", inference_n_recycle=3)
-    wrapper.init_model()
+    wrapper = OpenFoldWrapper(device="cuda:0", inference_n_recycle=3).init_model()
 
     task = ProteinTask()
-    task.set_input_protein_task("protein.pdb", chains=["A"])
-    task.set_task_mutants(parse_mutations("A:S11A"))
-    task.set_observable_positions()
-    task.evaluate(of_wrapper=wrapper)
+    task.set_input("protein.pdb", chains=["A"])
+    task.set_mutations("A:S11A")
+    task.set_observables()
+    task.evaluate(wrapper)
 
-The lightweight task/adapter APIs do not require PyTorch. ``OpenFoldWrapper``
-(and anything that runs AlphaFold inference) does; it is imported lazily so the
-rest of the package is usable without the optional ``[openfold]`` extra.
+    wt_vector, mt_vector = task.embeddings(["pair", "lddt_logits", "plddt"])
+
+The task, mutation, structure and adapter APIs are pure NumPy/pandas and do not
+require PyTorch. ``OpenFoldWrapper`` (and anything that runs AlphaFold inference)
+does; it is imported lazily so the rest of the package stays usable without the
+optional ``[openfold]`` extra.
 """
 
 from aftoolkit._compat import install_legacy_aliases
-
-# Lightweight, torch-free public API (safe to import eagerly).
-from aftoolkit.processing.protein_task import ProteinTask
-from aftoolkit.processing.protein_complex_task import ProteinComplexTask
-from aftoolkit.processing.arg_parser import parse_mutations, parse_positions
 from aftoolkit.models.adapter import (
     AdapterMonomer,
-    AdapterMultimer,
     AdapterMonomerPerResiduePredictor,
+    AdapterMultimer,
 )
 from aftoolkit.models.utils import calculate_metrics
+from aftoolkit.mutations import (
+    Mutation,
+    ObservableRegion,
+    parse_mutations,
+    parse_point_mutations,
+    parse_positions,
+)
+from aftoolkit.structure import (
+    DEFAULT_CHAIN_GAP,
+    load_protein,
+    mutate_protein,
+    save_to_pdb,
+)
+from aftoolkit.tasks import InputProtein, ProteinComplexTask, ProteinState, ProteinTask
 
-# Allow old `AFToolKit.*` pickles to resolve to the renamed package.
+# Lets artifacts pickled under the old `AFToolKit.*` module path still resolve.
 install_legacy_aliases()
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 __all__ = [
-    "ProteinTask",
-    "ProteinComplexTask",
-    "parse_mutations",
-    "parse_positions",
+    "DEFAULT_CHAIN_GAP",
     "AdapterMonomer",
-    "AdapterMultimer",
     "AdapterMonomerPerResiduePredictor",
-    "calculate_metrics",
+    "AdapterMultimer",
+    "InputProtein",
+    "Mutation",
+    "ObservableRegion",
     "OpenFoldWrapper",
-    "resolve_device",
+    "ProteinComplexTask",
+    "ProteinState",
+    "ProteinTask",
     "__version__",
+    "calculate_metrics",
+    "load_protein",
+    "mutate_protein",
+    "parse_mutations",
+    "parse_point_mutations",
+    "parse_positions",
+    "resolve_device",
+    "save_to_pdb",
 ]
+
+_LAZY = {"OpenFoldWrapper", "resolve_device"}
 
 
 def __getattr__(name):
-    """Lazily expose torch-dependent objects from the top-level package."""
-    if name in ("OpenFoldWrapper", "resolve_device"):
-        from aftoolkit.processing import openfold_wrapper
+    """Expose the torch-dependent folding objects without importing torch eagerly."""
+    if name in _LAZY:
+        from aftoolkit import folding
 
-        return getattr(openfold_wrapper, name)
+        return getattr(folding, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(__all__)

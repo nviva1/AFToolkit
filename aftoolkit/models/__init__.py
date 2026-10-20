@@ -1,7 +1,11 @@
-from aftoolkit.models.adapter import AdapterMonomer, AdapterMultimer, AdapterMonomerPerResiduePredictor
+from aftoolkit.models.adapter import (
+    AdapterMonomer,
+    AdapterMonomerPerResiduePredictor,
+    AdapterMultimer,
+)
 
 __all__ = [
     "AdapterMonomer",
-    "AdapterMultimer",
-    "AdapterMonomerPerResiduePredictor"
+    "AdapterMonomerPerResiduePredictor",
+    "AdapterMultimer"
 ]

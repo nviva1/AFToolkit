@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aftoolkit"
-version = "1.0.0"
+version = "2.0.0"
 description = "Python library for routine protein engineering tasks using AlphaFold2-derived representations."
 readme = "README.md"
 license = { text = "MIT" }
@@ -64,10 +64,8 @@ Homepage = "https://github.com/AIRI-Institute/AFToolkit"
 Repository = "https://github.com/AIRI-Institute/AFToolkit"
 
 [project.scripts]
-run_protein_task = "aftoolkit.processing.run_protein_task:main"
-run_protein_complex_task = "aftoolkit.processing.run_protein_complex_task:main"
-aftoolkit-predict = "aftoolkit.inference:main"
-aftoolkit-score-complex = "aftoolkit.scoring:main"
+# One entry point with subcommands: task, complex, predict, score, train.
+aftoolkit = "aftoolkit.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["aftoolkit*"]

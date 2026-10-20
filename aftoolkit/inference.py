@@ -1,85 +1,66 @@
-"""Mutation-impact inference for trained AFToolkit adapters.
+"""Mutation-impact prediction with trained AFToolkit adapters.
 
-Given a structure and one or more point mutations (on a single chain), this runs
-the modified AlphaFold2 inference on the wildtype and mutant, predicts the ddG
-impact with one or more trained adapter models, gathers AlphaFold confidence
-scores (pLDDT, pTM, PAE) per mutated site, and emits:
+Given a structure and one or more point mutations on a single chain, this runs
+the modified AlphaFold2 inference on the wildtype and the mutant, predicts the
+ddG impact with one or more trained adapters, gathers AlphaFold confidence per
+mutated site, and emits:
 
-* a versioned, structured ``<name>.json`` report (predictions, per-site
-  confidence, change); and
-* the predicted wildtype and mutant structures as ``<name>_wt.pdb`` /
-  ``<name>_mt.pdb``.
+* a versioned ``<name>.json`` report (predictions, per-site confidence, change); and
+* the predicted structures as ``<name>_wt.pdb`` / ``<name>_mt.pdb``.
 
-The numeric/serialisation logic is free of any PyTorch/OpenFold imports so it can
-be unit-tested without the heavy stack (see ``tests/test_inference_report.py``).
-
-CLI::
-
-    aftoolkit-predict --pdb 5BPJ.pdb --chain A --mutations K90M,N107S,W103F \\
-        --models "data/models/.../trained_*.pkl" --out-dir results --device mps
+The report-building logic is free of any PyTorch/OpenFold import, so it is unit
+tested without the heavy stack (see ``tests/test_inference_report.py``).
 """
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import glob
 import json
 import logging
 import os
 import pickle
-import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
 
 import numpy as np
+
+from aftoolkit.structure import DEFAULT_CHAIN_GAP
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.2"
 DEFAULT_FEATURES = ("pair", "lddt_logits", "plddt")
-_MUTATION_RE = re.compile(r"^(?P<wt>[A-Z])(?P<pos>\d+)(?P<mt>[A-Z])$")
 
-# Inference pipelines -> OpenFoldWrapper flags.
-#   mask    : AFToolkit (masked template after cycle 0)        [default]
-#   vanilla : standard AF2 (template kept every recycle)
-#   af2rank : AF2Rank "gap" trick (side chains masked to gaps)
+#: Inference formats, as ``OpenFoldWrapper`` flags. See that class for what each
+#: one shows the model.
 PIPELINES = {
     "mask":    dict(always_use_template=False, side_chain_mask=False),
     "vanilla": dict(always_use_template=True,  side_chain_mask=False),
     "af2rank": dict(always_use_template=False, side_chain_mask=True),
 }
 
+__all__ = [
+    "DEFAULT_FEATURES",
+    "PIPELINES",
+    "SCHEMA_VERSION",
+    "Confidence",
+    "PredictionReport",
+    "confidence_change",
+    "confidence_from_output",
+    "predict_mutation",
+]
+
 
 # --------------------------------------------------------------------------- #
-# Pure, torch-free logic (unit-tested)
+# Report building (torch-free, unit-tested)
 # --------------------------------------------------------------------------- #
-def parse_point_mutation(mutation: str) -> tuple[str, int, str]:
-    """Parse a single point mutation ``<WT><pos><MT>`` (e.g. ``E285K``).
-
-    Returns ``(wt_aa, position, mt_aa)``; raises ``ValueError`` if malformed.
-    """
-    m = _MUTATION_RE.match(mutation.strip())
-    if not m:
-        raise ValueError(
-            f"Invalid mutation {mutation!r}; expected <WT><pos><MT>, e.g. 'E285K'."
-        )
-    return m["wt"], int(m["pos"]), m["mt"]
-
-
-def parse_mutations_list(mutations) -> list[tuple[str, int, str]]:
-    """Parse one or more comma-separated point mutations into ``(wt, pos, mt)``."""
-    if isinstance(mutations, str):
-        mutations = [m for m in mutations.split(",") if m.strip()]
-    return [parse_point_mutation(m) for m in mutations]
-
-
 @dataclass
 class Confidence:
     """AlphaFold confidence for one predicted structure (per mutated site)."""
 
     mean_plddt: float
-    ptm: Optional[float] = None
+    ptm: float | None = None
     per_site_plddt: dict = field(default_factory=dict)   # {"90": 96.3}
     per_site_pae: dict = field(default_factory=dict)     # {"90": 3.4}
 
@@ -90,14 +71,16 @@ def confidence_from_output(of_output: dict, site_indices: dict) -> Confidence:
     Args:
         of_output: raw model output (``plddt``, optional ``predicted_tm_score``
             and ``predicted_aligned_error``).
-        site_indices: mapping ``{residue_number: internal_index}`` for the sites
-            of interest.
+        site_indices: ``{residue_number: internal_index}`` for the sites of
+            interest.
     """
     plddt = np.asarray(of_output["plddt"]).reshape(-1)
     conf = Confidence(mean_plddt=round(float(plddt.mean()), 3))
     if "predicted_tm_score" in of_output:
         conf.ptm = round(float(np.asarray(of_output["predicted_tm_score"]).reshape(-1)[0]), 4)
-    pae = np.asarray(of_output["predicted_aligned_error"]) if "predicted_aligned_error" in of_output else None
+
+    pae = (np.asarray(of_output["predicted_aligned_error"])
+           if "predicted_aligned_error" in of_output else None)
     for resnum, idx in site_indices.items():
         conf.per_site_plddt[str(resnum)] = round(float(plddt[idx]), 3)
         if pae is not None:
@@ -132,7 +115,7 @@ class PredictionReport:
     confidence: dict
     structures: dict
     schema_version: str = SCHEMA_VERSION
-    report_json: Optional[str] = None
+    report_json: str | None = None
 
     def to_json(self, path: str) -> str:
         with open(path, "w") as f:
@@ -141,17 +124,17 @@ class PredictionReport:
         return path
 
 
-def _site_index_map(obs_positions: dict) -> dict:
-    """Map residue number -> internal index from a ``{pos_name: idx}`` dict.
+def site_index_map(observed: dict) -> dict:
+    """Map residue number -> internal index from a ``{residue_key: index}`` dict.
 
-    Position names look like ``"K_A_90"`` (``<aa>_<chain>_<resnum>``).
+    Residue keys look like ``"K_A_90"`` (``<aa>_<chain>_<resnum>``).
     """
-    out = {}
-    for name, idx in obs_positions.items():
-        digits = "".join(ch for ch in name.split("_")[-1] if ch.isdigit())
+    sites = {}
+    for key, idx in observed.items():
+        digits = "".join(ch for ch in key.split("_")[-1] if ch.isdigit())
         if digits:
-            out[int(digits)] = idx
-    return out
+            sites[int(digits)] = idx
+    return sites
 
 
 # --------------------------------------------------------------------------- #
@@ -162,11 +145,14 @@ def predict_mutation(
     chain: str,
     mutations,
     model_paths: Sequence[str] = (),
-    device: Optional[str] = None,
+    device: str | None = None,
     n_recycle: int = 1,
     out_dir: str = ".",
     features: Sequence[str] = DEFAULT_FEATURES,
     pipeline: str = "mask",
+    chain_gap: int = DEFAULT_CHAIN_GAP,
+    save_structures: bool = True,
+    pymol_session: bool = False,
     wrapper=None,
 ) -> PredictionReport:
     """Predict the impact of one or more mutations on ``chain``.
@@ -181,6 +167,12 @@ def predict_mutation(
         n_recycle: AlphaFold recycling iterations (match the model's training).
         out_dir: directory for the JSON report and predicted PDB structures.
         features: feature names the adapter consumes.
+        pipeline: one of :data:`PIPELINES`.
+        chain_gap: residue-index gap inserted between chains.
+        save_structures: write the predicted wildtype and mutant PDB files.
+        pymol_session: also write a structure whose B-factor column is the
+            mutant-minus-wildtype pLDDT, a PyMOL script colouring it on a
+            diverging ramp, and (if PyMOL is installed) a ``.pse`` session.
         wrapper: optional pre-initialised ``OpenFoldWrapper``.
 
     Returns:
@@ -188,75 +180,95 @@ def predict_mutation(
 
     Raises:
         FileNotFoundError: if ``pdb`` is missing.
-        ValueError: if any mutation is malformed or its WT residue does not match
-            the structure.
+        ValueError: if a mutation is malformed, the pipeline is unknown, or a
+            mutation's wildtype residue does not match the structure.
     """
-    from aftoolkit.processing.protein_task import ProteinTask
-    from aftoolkit.processing.arg_parser import parse_mutations, parse_positions
-    from aftoolkit.processing.utils import save_to_pdb, safe_filename_part
+    from aftoolkit.mutations import ObservableRegion, parse_point_mutations
+    from aftoolkit.structure import safe_filename_part, save_to_pdb
+    from aftoolkit.tasks import ProteinTask
 
     pdb = os.path.expanduser(pdb)
     if not os.path.exists(pdb):
         raise FileNotFoundError(f"PDB not found: {pdb}")
     if pipeline not in PIPELINES:
         raise ValueError(f"Unknown pipeline {pipeline!r}; choose from {list(PIPELINES)}.")
-    parsed = parse_mutations_list(mutations)
-    mut_strs = [f"{wt}{pos}{mt}" for wt, pos, mt in parsed]
-    os.makedirs(out_dir, exist_ok=True)
-    mut_spec = ",".join(f"{chain}:{m}" for m in mut_strs)
-    pos_spec = ",".join(f"{chain}:{pos}" for _, pos, _ in parsed)
-    label = "_".join(mut_strs)
-    name = f"{safe_filename_part(os.path.basename(pdb))}_{chain}_{label}"
 
-    # Build task and validate WT residues *before* loading the model (fail fast).
+    parsed = parse_point_mutations(mutations, chain)
+    if not parsed:
+        raise ValueError("No mutations given.")
+    label = "_".join(f"{m.wt}{m.position}{m.mt}" for m in parsed)
+    name = f"{safe_filename_part(os.path.basename(pdb))}_{chain}_{label}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Build the task and validate the wildtype residues *before* loading the
+    # model, so a typo fails in a second rather than after inference.
     task = ProteinTask()
-    task.set_input_protein_task(pdb, chains=[chain])
-    task.set_task_mutants(parse_mutations(mut_spec))
-    task.set_wildtype_protein()
-    for wt, pos, _ in parsed:
-        found = task.get_wt_aa(pos, chain)
-        if found != wt:
+    task.set_input(pdb, chains=[chain], chain_gap=chain_gap)
+    task.set_mutations(parsed)
+    for mutation in parsed:
+        found = task.wt_residue(mutation.position, chain)
+        if found != mutation.wt:
             raise ValueError(
-                f"Mutation {wt}{pos}? expects wildtype {wt} at {chain}:{pos}, "
-                f"but the structure has {found}."
+                f"Mutation {mutation} expects wildtype {mutation.wt} at "
+                f"{chain}:{mutation.position}, but the structure has {found}."
             )
-    task.set_observable_positions(parse_positions(pos_spec))
+    task.set_observables(
+        [ObservableRegion(chain=chain, start=m.position) for m in parsed]
+    )
 
     if wrapper is None:
-        from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
+        from aftoolkit.folding import OpenFoldWrapper
+
         wrapper = OpenFoldWrapper(device=device, inference_n_recycle=n_recycle,
                                   **PIPELINES[pipeline])
         wrapper.init_model()
 
     logger.info("Running wildtype inference for %s", name)
-    task.evaluate_wildtype_protein(wrapper, store_of_protein=True)
-    wt_sites = _site_index_map(task.get_wildtype_observable_positions())
-    wt_conf = confidence_from_output(wrapper.of_output, wt_sites)
-    wt_pdb = os.path.join(out_dir, f"{name}_wt.pdb")
-    save_to_pdb(task.get_wildtype_protein_of(), wt_pdb)
+    # The structures are always kept: the confidence-difference map needs both,
+    # even when the caller does not want them written out.
+    task.evaluate_wildtype(wrapper, store_structure=True)
+    wt_conf = confidence_from_output(wrapper.of_output,
+                                     site_index_map(task.wildtype.observed))
 
     logger.info("Running mutant inference for %s", name)
-    task.evaluate_mutate_protein(wrapper, store_of_protein=True)
-    mt_sites = _site_index_map(task.get_mutate_observable_positions())
-    mt_conf = confidence_from_output(wrapper.of_output, mt_sites)
-    mt_pdb = os.path.join(out_dir, f"{name}_mt.pdb")
-    save_to_pdb(task.get_mutate_protein_of(), mt_pdb)
+    task.evaluate_mutant(wrapper, store_structure=True)
+    mt_conf = confidence_from_output(wrapper.of_output,
+                                     site_index_map(task.mutant.observed))
 
-    predictions = {}
-    resolved = [m for pat in model_paths for m in sorted(glob.glob(os.path.expanduser(pat)))]
-    if model_paths and not resolved:
-        logger.warning("No adapter models matched %s", list(model_paths))
-    for mp in resolved:
-        with open(mp, "rb") as f:
-            adapter = pickle.load(f)
-        predictions[os.path.basename(mp)] = round(float(np.ravel(adapter.predict(task))[0]), 4)
-    ensemble = round(float(np.mean(list(predictions.values()))), 4) if predictions else None
+    structures = {}
+    if save_structures:
+        structures["wildtype_pdb"] = os.path.join(out_dir, f"{name}_wt.pdb")
+        structures["mutant_pdb"] = os.path.join(out_dir, f"{name}_mt.pdb")
+        save_to_pdb(task.wildtype.folded, structures["wildtype_pdb"])
+        save_to_pdb(task.mutant.folded, structures["mutant_pdb"])
+
+    if pymol_session:
+        from aftoolkit.visualize import write_pymol_session
+
+        session = write_pymol_session(
+            task.wildtype.folded, task.mutant.folded,
+            out_prefix=os.path.join(out_dir, name),
+            sites=[m.position for m in parsed],
+            label=f"{os.path.basename(pdb)} {chain} {label}",
+        )
+        structures["delta_pdb"] = session["delta_pdb"]
+        structures["pymol_script"] = session["pml"]
+        structures["pymol_session"] = session["pse"]
+        structures["max_abs_delta_plddt"] = round(session["max_abs_delta"], 3)
+        logger.info("Confidence-difference map -> %s (max |delta pLDDT| %.1f)",
+                    session["pse"] or session["pml"], session["max_abs_delta"])
+
+    predictions = _run_adapters(model_paths, task)
+    ensemble = (round(float(np.mean(list(predictions.values()))), 4)
+                if predictions else None)
 
     report = PredictionReport(
         input={
-            "pdb": pdb, "chain": chain, "mutations": mut_strs, "positions": [p for _, p, _ in parsed],
+            "pdb": pdb, "chain": chain,
+            "mutations": [f"{m.wt}{m.position}{m.mt}" for m in parsed],
+            "positions": [m.position for m in parsed],
             "device": wrapper.device, "n_recycle": n_recycle, "pipeline": pipeline,
-            "features": list(features),
+            "chain_gap": chain_gap, "features": list(features),
         },
         predicted_ddg={
             "per_model": predictions,
@@ -269,46 +281,25 @@ def predict_mutation(
             "mutant": dataclasses.asdict(mt_conf),
             "change": confidence_change(mt_conf, wt_conf),
         },
-        structures={"wildtype_pdb": wt_pdb, "mutant_pdb": mt_pdb},
+        structures=structures,
     )
     path = report.to_json(os.path.join(out_dir, f"{name}.json"))
     logger.info("Wrote report -> %s", path)
     return report
 
 
-def main() -> None:
-    from aftoolkit.logging_config import configure_logging
+def _run_adapters(model_paths: Sequence[str], task) -> dict:
+    """Predict with every adapter matching ``model_paths``, keyed by filename."""
+    resolved = [m for pattern in model_paths
+                for m in sorted(glob.glob(os.path.expanduser(pattern)))]
+    if model_paths and not resolved:
+        logger.warning("No adapter models matched %s", list(model_paths))
 
-    p = argparse.ArgumentParser(
-        description="Predict mutation impact (ddG + confidence), writing a JSON "
-                    "report and predicted WT/mutant PDB structures.",
-    )
-    p.add_argument("--pdb", required=True, help="Input PDB structure.")
-    p.add_argument("--chain", required=True, help="Chain the mutation(s) apply to.")
-    p.add_argument("--mutations", "--mutation", dest="mutations", required=True,
-                   help="One mutation (E285K) or several, comma-separated "
-                        "(K90M,N107S,W103F).")
-    p.add_argument("--models", nargs="*", default=[],
-                   help="Trained adapter .pkl paths/globs (omit for confidence only).")
-    p.add_argument("--out-dir", default="results", help="Output directory.")
-    p.add_argument("--device", default=None, help="cuda:0 / mps / cpu (auto if unset).")
-    p.add_argument("--n-recycle", type=int, default=1)
-    p.add_argument("--format", dest="pipeline", default="mask", choices=list(PIPELINES),
-                   help="Inference pipeline: mask (AFToolkit, default), vanilla (AF2), "
-                        "or af2rank (the 'gap' trick).")
-    args = p.parse_args()
-
-    configure_logging()
-    try:
-        report = predict_mutation(
-            pdb=args.pdb, chain=args.chain, mutations=args.mutations,
-            model_paths=args.models, device=args.device, n_recycle=args.n_recycle,
-            out_dir=args.out_dir, pipeline=args.pipeline,
+    predictions = {}
+    for path in resolved:
+        with open(path, "rb") as f:
+            adapter = pickle.load(f)
+        predictions[os.path.basename(path)] = round(
+            float(np.ravel(adapter.predict(task))[0]), 4
         )
-    except (FileNotFoundError, ValueError) as exc:
-        raise SystemExit(f"error: {exc}")
-    print(json.dumps(dataclasses.asdict(report), indent=2))
-
-
-if __name__ == "__main__":
-    main()
+    return predictions

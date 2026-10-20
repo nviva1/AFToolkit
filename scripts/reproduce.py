@@ -25,19 +25,14 @@ models are reused, so the run resumes where it left off.
 
 import argparse
 import os
-import pickle
 import sys
 
-import pandas as pd
+from aftoolkit.training import train_adapter
 
+# The sibling helper scripts are plain modules, not a package.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_prostata_task                       # noqa: E402
 from evaluate import evaluate as eval_adapter    # noqa: E402
-from train_monomer import build_base_model       # noqa: E402
-
-# Repo root on path for the top-level training module.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from train_adapter_monomer import train_adapter_monomer   # noqa: E402
 
 PROSTATA_DS = "../PROSTATA/DATASETS"
 WORK = "data/prostata"
@@ -49,23 +44,20 @@ PAPER_SPEARMAN = {"s669": 0.51, "ssym": 0.77, "p53": None}
 
 def generate_features(task_csv, out_dir, wrapper):
     """Run OpenFold for every mutation in ``task_csv`` (idempotent)."""
-    from aftoolkit import ProteinTask
-    from aftoolkit.processing.run_protein_task import prepare_task
+    from aftoolkit.cli.tasks import tasks_from_csv
 
-    tasks = prepare_task(pd.read_csv(task_csv))
+    tasks = list(tasks_from_csv(task_csv))
     os.makedirs(out_dir, exist_ok=True)
     done = 0
-    for task_id, task in tasks.items():
+    for task_id, build in tasks:
         out = os.path.join(out_dir, f"{task_id}.pkl")
         if os.path.exists(out):
             done += 1
             continue
         try:
-            pt = ProteinTask()
-            pt.set_input_protein_task(task=task)
-            pt.evaluate(of_wrapper=wrapper, store_of_protein=False)
-            with open(out, "wb") as f:
-                pickle.dump(pt, f)
+            task = build()
+            task.evaluate(wrapper, store_structure=False)
+            task.save(out)
             done += 1
         except Exception as exc:               # keep going on a bad structure
             print(f"  ! {task_id}: {exc}")
@@ -110,15 +102,12 @@ def main():
     # 3. Train SVM adapter --------------------------------------------------
     npy_dir = os.path.join(WORK, "npy", "pair+lddt_logits+plddt")
     os.makedirs(npy_dir, exist_ok=True)
-    train_adapter_monomer(
-        base_model=build_base_model("svm"), adapter_name="svm",
-        train_dataset_path=train_task, input_features=["pair", "lddt_logits", "plddt"],
-        concat_features=True, train_dataset_npy_folder=npy_dir,
-        protein_tasks_folder=args.features_dir, train_mut_types=["ss"],
-        protein_aggregation="mutpos", multi_aggregation="sum",
+    model = train_adapter(
+        model="svm", target="monomer", train_csv=train_task,
+        features_dir=args.features_dir, npy_dir=npy_dir,
+        features=["pair", "lddt_logits", "plddt"], concat_features=True,
+        mut_types=["ss"], protein_aggregation="mutpos", multi_aggregation="sum",
     )
-    model = ("data/models/monomer/pair+lddt_logits+plddt/"
-             "trained_svm_concat_nomultitrain_aggmutpos_multisum.pkl")
 
     # 4. Evaluate vs the paper ---------------------------------------------
     print("\n================ RESULTS vs paper (Table 3) ================")

@@ -20,7 +20,7 @@ import os
 
 import pandas as pd
 
-from aftoolkit.processing.utils import load_protein, AA_3_TO_1_DICT
+from aftoolkit.structure import load_protein, AA_3_TO_1_DICT
 
 
 def build(csv, out, pdb_dir="../PROSTATA/PDB", split="train",

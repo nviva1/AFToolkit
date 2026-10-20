@@ -9,39 +9,43 @@ and reports:
                RBD-AIM paper).
 * ``mean_plddt`` / ``ptm`` -- global confidence.
 
-The numeric ``interface_pae`` helper is free of any torch/OpenFold import so it
-is unit-tested without the heavy stack.
-
-CLI::
-
-    aftoolkit-score-complex --pdb complex.pdb --antigen E --antibody H,L \\
-        --device mps --out-dir results
+The numeric ``interface_pae`` / ``interface_iptm`` helpers are free of any
+torch/OpenFold import, so they are unit-tested without the heavy stack.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
+from aftoolkit.inference import PIPELINES
+from aftoolkit.structure import DEFAULT_CHAIN_GAP
+
 logger = logging.getLogger(__name__)
 
+__all__ = ["interface_iptm", "interface_pae", "score_complex"]
 
-def interface_pae(pae, chain_labels, group_a, group_b) -> float:
-    """Mean predicted-aligned-error between two groups of chains.
+
+def interface_pae(pae, chain_labels, group_a, group_b, coords=None, cutoff=None) -> float:
+    """Interface predicted-aligned-error between two groups of chains.
 
     Args:
         pae: (N, N) predicted-aligned-error matrix (residue order matches
             ``chain_labels``).
         chain_labels: length-N sequence of each residue's original chain id.
         group_a, group_b: iterables of chain ids defining the two interface sides.
+        coords: optional (N, 3) CA coordinates. When given with ``cutoff``, the
+            mean is restricted to cross-group residue pairs in **contact** (CA-CA
+            distance < ``cutoff``) -- the true interface PAE. Without it, the mean
+            spans all cross-group pairs.
+        cutoff: contact distance in Angstrom (e.g. 12.0).
 
     Returns:
-        Mean PAE over all cross-group residue pairs (both directions).
+        Mean PAE over the selected cross-group residue pairs (both directions).
 
     Raises:
         ValueError: if either group is empty in ``chain_labels``.
@@ -54,17 +58,52 @@ def interface_pae(pae, chain_labels, group_a, group_b) -> float:
         raise ValueError(
             f"Empty interface side: |group_a|={int(a.sum())}, |group_b|={int(b.sum())}."
         )
-    cross = np.concatenate([pae[np.ix_(a, b)].ravel(), pae[np.ix_(b, a)].ravel()])
-    return float(cross.mean())
+    pab, pba = pae[np.ix_(a, b)], pae[np.ix_(b, a)]
+    if coords is not None and cutoff is not None:
+        coords = np.asarray(coords, dtype=float)
+        d = np.linalg.norm(coords[a][:, None, :] - coords[b][None, :, :], axis=-1)
+        mask = d < cutoff
+        if mask.any():
+            return float(np.concatenate([pab[mask], pba.T[mask]]).mean())
+        return float(min(pab.min(), pba.min()))  # no contacts -> best-case PAE
+    return float(np.concatenate([pab.ravel(), pba.ravel()]).mean())
+
+
+def interface_iptm(pae, chain_labels, group_a, group_b) -> float:
+    """Interface pTM (ipTM) between two chain groups, derived from the PAE.
+
+    pTM is computed from the predicted aligned error via the TM-score transform
+    ``f(e) = 1 / (1 + (e/d0)^2)`` with ``d0 = 1.24*(N-15)^(1/3) - 1.8``. For the
+    *interface* version, each residue is scored only against residues of the
+    other group, and ipTM is the best (max) such per-residue score -- higher is
+    a more confident interface (range ~0-1).
+    """
+    pae = np.asarray(pae, dtype=float)
+    labels = np.asarray(chain_labels)
+    a = np.isin(labels, list(group_a))
+    b = np.isin(labels, list(group_b))
+    if not a.any() or not b.any():
+        raise ValueError("interface_iptm: an interface side is empty.")
+    n = len(labels)
+    d0 = max(1.0, 1.24 * (n - 15) ** (1.0 / 3.0) - 1.8)
+    tm = 1.0 / (1.0 + (pae / d0) ** 2)
+    best = 0.0
+    for gi, gj in [(a, b), (b, a)]:
+        per_i = tm[np.ix_(gi, gj)].mean(axis=1)  # each i averaged over other-group j
+        best = max(best, float(per_i.max()))
+    return best
 
 
 def score_complex(
     pdb: str,
     antigen_chains: Sequence[str],
     antibody_chains: Sequence[str],
-    device: Optional[str] = None,
+    device: str | None = None,
     n_recycle: int = 1,
-    out_dir: Optional[str] = None,
+    out_dir: str | None = None,
+    chain_gap: int = DEFAULT_CHAIN_GAP,
+    pipeline: str = "mask",
+    contact_cutoff: float | None = None,
     wrapper=None,
 ) -> dict:
     """Score a complex structure: interface PAE + global confidence.
@@ -74,22 +113,36 @@ def score_complex(
         antigen_chains / antibody_chains: chain ids for each interface side.
         device, n_recycle: OpenFold inference settings.
         out_dir: if given, the predicted structure + JSON report are written here.
+        chain_gap: residue-index gap inserted between chains. The default
+            saturates AlphaFold's relative-position window; published protocols
+            may specify another value (the RBD-AIM paper uses 25).
+        pipeline: one of :data:`aftoolkit.inference.PIPELINES`.
+        contact_cutoff: when given, iPAE is restricted to cross-group residue
+            pairs whose CA atoms are within this distance, in Angstrom.
         wrapper: optional pre-initialised ``OpenFoldWrapper``.
 
     Returns:
-        dict with ``ipae``, ``mean_plddt``, ``ptm``, ``n_residues`` and inputs.
+        dict with ``ipae``, ``iptm``, ``mean_plddt``, ``ptm``, ``n_residues``
+        and the inputs used.
+
+    Raises:
+        FileNotFoundError: if ``pdb`` is missing.
+        ValueError: if ``pipeline`` is unknown.
     """
-    from aftoolkit.processing.utils import load_protein, save_to_pdb
-    from aftoolkit.processing.openfold_wrapper import OpenFoldWrapper
+    from aftoolkit.folding import OpenFoldWrapper
+    from aftoolkit.structure import load_protein, save_to_pdb
 
     pdb = os.path.expanduser(pdb)
     if not os.path.exists(pdb):
         raise FileNotFoundError(f"PDB not found: {pdb}")
+    if pipeline not in PIPELINES:
+        raise ValueError(f"Unknown pipeline {pipeline!r}; choose from {list(PIPELINES)}.")
     chains = list(antigen_chains) + list(antibody_chains)
 
-    protein_df = load_protein(pdb, chains=chains)
+    protein_df = load_protein(pdb, chains=chains, chain_gap=chain_gap)
     if wrapper is None:
-        wrapper = OpenFoldWrapper(device=device, inference_n_recycle=n_recycle)
+        wrapper = OpenFoldWrapper(device=device, inference_n_recycle=n_recycle,
+                                  **PIPELINES[pipeline])
         wrapper.init_model()
     wrapper.evaluate(protein_df=protein_df)
     of_output = wrapper.of_output
@@ -101,15 +154,20 @@ def score_complex(
 
     pae = of_output["predicted_aligned_error"]
     plddt = np.asarray(of_output["plddt"]).reshape(-1)
+    coords = ca[["x_coord", "y_coord", "z_coord"]].to_numpy() if contact_cutoff else None
     result = {
         "input": {"pdb": pdb, "antigen_chains": list(antigen_chains),
                   "antibody_chains": list(antibody_chains),
-                  "device": wrapper.device, "n_recycle": n_recycle},
-        "ipae": round(interface_pae(pae, chain_labels, antigen_chains, antibody_chains), 4),
+                  "device": wrapper.device, "n_recycle": n_recycle,
+                  "chain_gap": chain_gap, "pipeline": pipeline,
+                  "contact_cutoff": contact_cutoff},
+        "ipae": round(interface_pae(pae, chain_labels, antigen_chains, antibody_chains,
+                                    coords=coords, cutoff=contact_cutoff), 4),
+        "iptm": round(interface_iptm(pae, chain_labels, antigen_chains, antibody_chains), 4),
         "mean_plddt": round(float(plddt.mean()), 3),
         "ptm": round(float(np.asarray(of_output["predicted_tm_score"]).reshape(-1)[0]), 4)
                if "predicted_tm_score" in of_output else None,
-        "n_residues": int(len(chain_labels)),
+        "n_residues": len(chain_labels),
     }
 
     if out_dir:
@@ -121,33 +179,3 @@ def score_complex(
     logger.info("iPAE=%.3f  mean_pLDDT=%.1f  pTM=%s  (%s)",
                 result["ipae"], result["mean_plddt"], result["ptm"], os.path.basename(pdb))
     return result
-
-
-def main() -> None:
-    from aftoolkit.logging_config import configure_logging
-
-    p = argparse.ArgumentParser(
-        description="Recompute interface PAE (iPAE) + confidence for a complex.")
-    p.add_argument("--pdb", required=True)
-    p.add_argument("--antigen", required=True, help="Antigen chain id(s), comma-separated.")
-    p.add_argument("--antibody", required=True, help="Antibody chain id(s), comma-separated.")
-    p.add_argument("--device", default=None)
-    p.add_argument("--n-recycle", type=int, default=1)
-    p.add_argument("--out-dir", default="results")
-    args = p.parse_args()
-
-    configure_logging()
-    try:
-        result = score_complex(
-            pdb=args.pdb,
-            antigen_chains=args.antigen.split(","),
-            antibody_chains=args.antibody.split(","),
-            device=args.device, n_recycle=args.n_recycle, out_dir=args.out_dir,
-        )
-    except (FileNotFoundError, ValueError) as exc:
-        raise SystemExit(f"error: {exc}")
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    main()

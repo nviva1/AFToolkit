@@ -10,9 +10,9 @@ columns the AFToolkit pipeline needs:
 
     id, pdb_id, chain, path, positions, mutations, mut_info, mut_type, ddg, split
 
-``id`` matches the feature filename ``run_protein_task`` produces, so the same
-CSV drives both feature generation (``run_protein_task -i <csv>``) and adapter
-training (``train_adapter_monomer``).
+``id`` matches the feature filename ``aftoolkit task`` produces, so the same
+CSV drives both feature generation (``aftoolkit task -i <csv>``) and adapter
+training (``aftoolkit train``).
 
 Example
 -------
@@ -101,8 +101,8 @@ def build_task_csv(mutations, pdbs, out, pdb_dir="data/cdna/pdb",
 
     out_df = pd.DataFrame(rows)
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    # Written WITH a leading index column: run_protein_task reads columns by
-    # name (index ignored), while train_adapter_monomer uses index_col=0.
+    # Written WITH a leading index column: `aftoolkit task` reads columns by
+    # name (index ignored), while `aftoolkit train` uses index_col=0.
     out_df.to_csv(out, index=True)
     print(f"Wrote {len(out_df)} mutations across {len(written_pdbs)} domains -> {out}")
     return out_df

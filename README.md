@@ -1,5 +1,11 @@
 # AFToolkit
 
+> A refactored version of [AIRI-Institute/AFToolkit](https://github.com/AIRI-Institute/AFToolkit).
+> Same method and the same vendored OpenFold; the package layout, public API and
+> command line were rewritten in 2.0, and several correctness bugs fixed along
+> the way (see the commit history). Original authors retain credit — this is not
+> a replacement for upstream.
+
 **AFToolkit** is a framework for molecular modeling of proteins with
 AlphaFold2-derived representations. It runs a protein structure through a
 (vendored, modified) OpenFold model, extracts per-residue embeddings and logits
@@ -29,7 +35,7 @@ The lightweight task-construction and adapter APIs need only standard scientific
 Python and install with plain `pip`:
 
 ```bash
-git clone https://github.com/AIRI-Institute/AFToolkit.git
+git clone https://github.com/nviva1/AFToolkit.git
 cd AFToolkit
 pip install .
 ```

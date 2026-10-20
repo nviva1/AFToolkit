@@ -60,8 +60,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/AIRI-Institute/AFToolkit"
-Repository = "https://github.com/AIRI-Institute/AFToolkit"
+Homepage = "https://github.com/nviva1/AFToolkit"
+Repository = "https://github.com/nviva1/AFToolkit"
+Upstream = "https://github.com/AIRI-Institute/AFToolkit"
 
 [project.scripts]
 # One entry point with subcommands: task, complex, predict, score, train.

@@ -1,0 +1,68 @@
+{
+  "input": {
+    "pdb": "2OCJ.pdb",
+    "chain": "A",
+    "mutations": [
+      "R273H"
+    ],
+    "positions": [
+      273
+    ],
+    "device": "mps",
+    "n_recycle": 4,
+    "pipeline": "mask",
+    "chain_gap": 32,
+    "features": [
+      "pair",
+      "lddt_logits",
+      "plddt"
+    ]
+  },
+  "predicted_ddg": {
+    "per_model": {
+      "trained_catboost_concat_nomultitrain_aggmutpos_multisum.pkl": 0.1981,
+      "trained_mlp_concat_nomultitrain_aggmutpos_multisum.pkl": 0.9489,
+      "trained_svm_concat_nomultitrain_aggmutpos_multisum.pkl": 0.4112
+    },
+    "ensemble_mean": 0.5194,
+    "units": "kcal/mol (sign per the adapter's training convention; multi-mutants = sum of single-mutation effects)"
+  },
+  "confidence": {
+    "wildtype": {
+      "mean_plddt": 89.147,
+      "ptm": 0.862,
+      "per_site_plddt": {
+        "273": 94.787
+      },
+      "per_site_pae": {
+        "273": 2.63
+      }
+    },
+    "mutant": {
+      "mean_plddt": 89.14,
+      "ptm": 0.862,
+      "per_site_plddt": {
+        "273": 95.233
+      },
+      "per_site_pae": {
+        "273": 2.664
+      }
+    },
+    "change": {
+      "delta_mean_plddt": -0.007,
+      "delta_per_site_plddt": {
+        "273": 0.446
+      },
+      "delta_per_site_pae": {
+        "273": 0.034
+      },
+      "delta_ptm": 0.0
+    }
+  },
+  "structures": {
+    "wildtype_pdb": "2OCJ.pdb_A_R273H_wt.pdb",
+    "mutant_pdb": "2OCJ.pdb_A_R273H_mt.pdb"
+  },
+  "schema_version": "1.2",
+  "report_json": null
+}

@@ -1,0 +1,68 @@
+{
+  "input": {
+    "pdb": "2OCJ.pdb",
+    "chain": "A",
+    "mutations": [
+      "K132E"
+    ],
+    "positions": [
+      132
+    ],
+    "device": "mps",
+    "n_recycle": 4,
+    "pipeline": "mask",
+    "chain_gap": 32,
+    "features": [
+      "pair",
+      "lddt_logits",
+      "plddt"
+    ]
+  },
+  "predicted_ddg": {
+    "per_model": {
+      "trained_catboost_concat_nomultitrain_aggmutpos_multisum.pkl": -0.6976,
+      "trained_mlp_concat_nomultitrain_aggmutpos_multisum.pkl": -0.6987,
+      "trained_svm_concat_nomultitrain_aggmutpos_multisum.pkl": -0.6011
+    },
+    "ensemble_mean": -0.6658,
+    "units": "kcal/mol (sign per the adapter's training convention; multi-mutants = sum of single-mutation effects)"
+  },
+  "confidence": {
+    "wildtype": {
+      "mean_plddt": 89.002,
+      "ptm": 0.8613,
+      "per_site_plddt": {
+        "132": 95.231
+      },
+      "per_site_pae": {
+        "132": 2.472
+      }
+    },
+    "mutant": {
+      "mean_plddt": 88.933,
+      "ptm": 0.8605,
+      "per_site_plddt": {
+        "132": 94.877
+      },
+      "per_site_pae": {
+        "132": 2.585
+      }
+    },
+    "change": {
+      "delta_mean_plddt": -0.069,
+      "delta_per_site_plddt": {
+        "132": -0.354
+      },
+      "delta_per_site_pae": {
+        "132": 0.113
+      },
+      "delta_ptm": -0.0008
+    }
+  },
+  "structures": {
+    "wildtype_pdb": "2OCJ.pdb_A_K132E_wt.pdb",
+    "mutant_pdb": "2OCJ.pdb_A_K132E_mt.pdb"
+  },
+  "schema_version": "1.2",
+  "report_json": null
+}

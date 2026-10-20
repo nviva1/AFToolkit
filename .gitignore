@@ -188,3 +188,27 @@ data/models/
 results/
 data/rbdaim/
 data/berovin/
+
+
+# Reproduction intermediates: regenerable by the scripts in each folder
+reproductions/**/*.npz
+reproductions/*/recomputed_paper/
+reproductions/*/*_tmp/
+reproductions/rbd_aim_fig2g/covox278_structures/
+reproductions/rbd_aim_fig2g/*_structures/
+reproductions/**/*.pse
+
+# Locally retrained adapters (rebuild with `aftoolkit train`)
+data/models_retrained/
+reproductions/*/pred_pdbs*/
+reproductions/*/x_ray_pdbs/
+reproductions/*/*_pae/
+reproductions/*/cb_tmp/
+catboost_info/
+
+# ...but the p53 example ships its results: the README embeds the figures and
+# analyse.py regenerates them from the committed CSV + reports.
+!reproductions/p53_e285k/results/
+!reproductions/p53_e285k/results/**
+# except the PyMOL session, which `pymol -cq E285K_delta.pml` rebuilds.
+reproductions/p53_e285k/results/*.pse

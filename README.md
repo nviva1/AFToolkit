@@ -386,8 +386,8 @@ wget https://bioinformatics-kardymon.obs.ru-moscow-1.hc.sbercloud.ru/AFToolkit/d
 ```bash
 python scripts/evaluate.py \
     --model "data/models/monomer/pair+lddt_logits+plddt/trained_svm_*.pkl" \
-    --test-csv data/prostata/s669_task.csv \
-    --features-dir data/prostata/features
+    --test-csv <benchmark-task>.csv \
+    --features-dir <features-dir>/
 ```
 
 ## Training your own adapter
@@ -399,9 +399,9 @@ adapter:
 aftoolkit train \
     --model svm \
     --target monomer \
-    --train-csv data/cdna/cdna_task_train.csv \
-    --features-dir data/cdna/features \
-    --npy-dir data/cdna/npy
+    --train-csv <task>.csv \
+    --features-dir <features-dir>/ \
+    --npy-dir <cache-dir>/
 ```
 
 `--model` selects the estimator (`svm`, `mlp`, `catboost`) and `--target`

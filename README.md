@@ -411,20 +411,31 @@ with the scikit-learn `fit`/`predict` interface can back the adapter.
 
 ## Rebuilding the adapters
 
-The monomer adapters can be retrained from the cached feature files in `data/`,
-which makes them independent of the external host:
+The monomer adapters can be retrained, which makes them independent of the
+external host. This needs a **feature cache**, which is not in the repository:
+one `ProteinTask` pickle per mutation, each the product of two AlphaFold passes.
+Generate it first, then train:
 
 ```bash
+# 1. features for every mutation in the task CSV (the slow step: ~1 min each)
+aftoolkit task -i <task.csv> -o features/ -n 4
+
+# 2. train against them; the split CSV below ships with the repo
 for m in svm mlp catboost; do
   aftoolkit train --model $m --target monomer \
       --train-csv data/cdna/mini2k_grouped_split.csv \
-      --features-dir data/cdna/features_n4 \
+      --features-dir features/ \
       --out-dir data/models_retrained
 done
 ```
 
-`mini2k_grouped_split.csv` splits by parent structure rather than by mutation,
-so no fold appears in both train and test. On the p53 benchmark — held out from
+The task CSVs and the structures they reference are likewise not shipped (the
+`data/` caches run to several hundred MB); `scripts/build_cdna_task.py` and
+`scripts/build_prostata_task.py` build them from the public source datasets.
+
+`mini2k_grouped_split.csv` records the exact split behind the numbers below: it
+splits by parent structure rather than by mutation, so no fold appears in both
+train and test. On the p53 benchmark — held out from
 both — the rebuilt ensemble matches the published one:
 
 | Ensemble | Spearman ρ | Pearson r |
